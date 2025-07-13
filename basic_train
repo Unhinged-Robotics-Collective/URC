@@ -1,0 +1,1 @@
+python -m lerobot.scripts.train --policy.path=lerobot/smolvla_base --dataset.repo_id=danaaubakirova/svla_so100_task1_v3 --batch_size=16 --steps=200000 --policy.push_to_hub=false
