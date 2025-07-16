@@ -17,24 +17,24 @@ def get_train_cfg(exp_name, max_iterations):
     train_cfg_dict = {
         "algorithm": {
             "class_name": "PPO",
+            "value_loss_coef": 1.0,
+            "use_clipped_value_loss": True,
             "clip_param": 0.2,
-            "desired_kl": 0.01,
-            "entropy_coef": 0.01,
+            "entropy_coef": 0.001,
+            "num_learning_epochs": 8, # changed from 5 to 8
+            "num_mini_batches": 4,
+            "learning_rate": 0.001,
+            "schedule": "adaptive",
             "gamma": 0.99,
             "lam": 0.95,
-            "learning_rate": 0.001,
+            "desired_kl": 0.01,
             "max_grad_norm": 1.0,
-            "num_learning_epochs": 5,
-            "num_mini_batches": 4,
-            "schedule": "adaptive",
-            "use_clipped_value_loss": True,
-            "value_loss_coef": 1.0,
         },
         "init_member_classes": {},
         "policy": {
             "activation": "elu",
-            "actor_hidden_dims": [512, 256, 128],
-            "critic_hidden_dims": [512, 256, 128],
+            "actor_hidden_dims": [64, 64], #[512, 256, 128],
+            "critic_hidden_dims": [64, 64], #[512, 256, 128],
             "init_noise_std": 1.0,
             "class_name": "ActorCritic",
         },
@@ -50,9 +50,9 @@ def get_train_cfg(exp_name, max_iterations):
             "run_name": "",
         },
         "runner_class_name": "OnPolicyRunner",
-        "num_steps_per_env": 24,
+        "num_steps_per_env": 24,  # checked
         "save_interval": 100,
-        "empirical_normalization": None,
+        "empirical_normalization": False, # changed from None to False
         "seed": 1,
     }
 
@@ -62,13 +62,13 @@ def get_train_cfg(exp_name, max_iterations):
 def get_cfgs():
     env_cfg = {
         # termination
-        "termination_if_roll_greater_than": 10,  # degree
-        "termination_if_pitch_greater_than": 10,
+        # "termination_if_roll_greater_than": 10,  # degree
+        # "termination_if_pitch_greater_than": 10,
         # base pose
-        "base_init_pos": [0.0, 0.0, 0.0],
-        "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 2.0,
-        "resampling_time_s": 4.0,
+        # "base_init_pos": [0.0, 0.0, 0.0],
+        # "base_init_quat": [1.0, 0.0, 0.0, 0.0],
+        # "episode_length_s": 2.0,
+        # "resampling_time_s": 4.0,
         "action_scale": 1.0,
         "simulate_action_latency": True,
         "clip_actions": 1.0,
@@ -82,7 +82,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="franka_reach")
     parser.add_argument("-B", "--num_envs", type=int, default=1024)
-    parser.add_argument("--max_iterations", type=int, default=16_0000)
+    parser.add_argument("--max_iterations", type=int, default=3000)
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu,logging_level="warning")
@@ -102,7 +102,7 @@ def main():
 
     pickle.dump([env_cfg, train_cfg], open(f"{log_dir}/cfgs.pkl", "wb"), )
 
-    env = FrankaReachTask(num_envs=args.num_envs, env_cfg={}, obs_cfg={}, reward_cfg={}, command_cfg={}, show_viewer=False)
+    env = FrankaReachTask(num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg={}, reward_cfg={}, command_cfg={}, show_viewer=False)
     env.reset()
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
     runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
