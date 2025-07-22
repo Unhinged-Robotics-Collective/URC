@@ -97,10 +97,9 @@ class FrankaReachTask:
         self.dofs_idx = [self.robot.get_joint(name).dof_idx_local for name in self.joint_names]
         print(f"[DEBUG] dofs_idx: {self.dofs_idx}")  # dofs_idx: [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
-        self.envs_idx = torch.arange(self.num_envs, device=self.device)
+        self.envs_idx = torch.arange(self.num_envs, device=self.device) # tensor([0, 1, 2, ..., num_envs])
 
         self.reset_buf = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
-        self.episode_length_buf = torch.zeros(self.num_envs, device=self.device)
         self.goal_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         
 
@@ -178,10 +177,16 @@ class FrankaReachTask:
         Returns:
             Tensor: Sampled joint positions, shape [num_envs, num_dofs]
         """
+        # default_pose = torch.tensor([
+        #     -1.5,  0.0,  0.0,
+        #     -1.5,  0.0,  1.5,
+        #     0.5,  0.04, 0.04,
+        # ], device=self.device)
+
         default_pose = torch.tensor([
-            -1.5,  0.0,  0.0,
-            -1.5,  0.0,  1.5,
-            0.5,  0.04, 0.04,
+            0.0, 0.0, 0.0,
+            -1.57079, 0.0, 1.57079,
+            -0.7853, 0.04, 0.04
         ], device=self.device)
 
         # Use 2σ to define a tight range around each joint angle
@@ -226,11 +231,33 @@ class FrankaReachTask:
         If envs_idx is None, it initializes for all environments.
         """
         if envs_idx is None:
-            envs_idx = self.envs_idx
+            envs_idx = self.envs_idx  # tensor([0, 1, 2, ..., num_envs])
+
+        # print(f"[DEBUG] envs_idx.shape: {envs_idx.shape}")
 
         # qpos = self._normal_sample_from_limits(envs_idx.shape[0])
-        qpos = self._normal_sample_from_default_pose(envs_idx.shape[0], std_scale=0.1)
-        self.robot.set_qpos(qpos, envs_idx=envs_idx)
+        qpos = self._normal_sample_from_default_pose(envs_idx.shape[0], std_scale=0.1)  # [envs_idx.shape[0], 9]
+        # print(f"[DEBUG] qpos.shape: {qpos.shape}")  
+        # print(f"[DEBUG] self.dof_targets.shape: {self.dof_targets.shape}")  
+
+        # [DEBUG] Resetting environments: tensor([239], device='cuda:0')
+        # [DEBUG] envs_idx.shape: torch.Size([1])
+        # [DEBUG] qpos.shape: torch.Size([1, 9])
+        # [DEBUG] self.dof_targets.shape: torch.Size([1024, 9])
+
+
+        # change only newly sampled positions
+        
+        self.dof_targets[envs_idx] = qpos[:]  # shape [num_envs, num_actions] ~ [1024, 9]
+
+        # just hard sets every time to the same position
+        # qpos = torch.tensor([
+        #     -1.5,  0.0,  0.0,
+        #     -1.5,  0.0,  1.5,
+        #     0.5,  0.04, 0.04,
+        # ], device=self.device).expand(envs_idx.shape[0], -1).clone()
+        
+        self.robot.set_qpos(self.dof_targets[envs_idx], envs_idx=envs_idx)
 
         # dofs limits:
         # (tensor([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973,  0.0000, 0.0000], device='cuda:0'),
@@ -335,18 +362,36 @@ class FrankaReachTask:
         Returns a boolean tensor of shape (num_envs,).
         """
         gripper_pos = self.robot.get_link("hand").get_pos(envs_idx=self.envs_idx)
+        # print(f"[DEBUG] gripper_pos: {gripper_pos}")
+        # print(f"[DEBUG] self.goal_pos: {self.goal_pos}")
         distance_to_goal = torch.norm(gripper_pos - self.goal_pos, dim=1)
+        # print(f"[DEBUG] distance_to_goal: {distance_to_goal}")
         reached = distance_to_goal < 0.1  # threshold for reaching the goal
+        # print(f"[DEBUG] reached: {reached}")
         return reached
     
     def get_dones(self):
         """
         Compute the done condition for the current step.
         Returns a tensor of shape (num_envs,).
+        Also logs the number of dones in self.extras["log"].
         """
         reached_goal = self.reached_goal()
-        dones = self.episode_length_buf >= self.max_episode_length  # [N,]
-        return dones | reached_goal  # return True if either condition is met
+        timeouts = self.episode_length_buf >= self.max_episode_length  # [N,]
+        # print(f"[DEBUG] self.episode_length_buf[:5]: {self.episode_length_buf[:5]}")
+        # print(f"[DEBUG] self.max_episode_length: {self.max_episode_length}")
+        # print(f"[DEBUG] timeouts[:5]: {timeouts[:5]}")
+        # print(f"reached_goal: {reached_goal}")
+        # print(f"dones: {dones}")
+        final_dones = timeouts | reached_goal  # return True if either condition is met
+     
+        self.extras["log"]["episode/num_reached_goal"] = reached_goal.sum().item()
+        self.extras["log"]["episode/num_timeouts"] = timeouts.sum().item()
+        self.extras["log"]["episode/num_final_dones"] = final_dones.sum().item()
+        self.extras["time_outs"] = timeouts
+
+
+        return final_dones
     
     def force_reset(self):
         """
@@ -424,9 +469,14 @@ class FrankaReachTask:
         self.obs_buf, self.extras = self.get_observations()
         self.rew_buf = self.get_reward()
         self.episode_length_buf += 1
+        # print(f"[DEBUG] self.episode_length_buf: {self.episode_length_buf}")
 
         ### Check if any envs are done
         self.reset_buf = self.get_dones()
+
+        # reset the environments that are done
+        self.reset_idx(self.reset_buf.nonzero(as_tuple=False).reshape((-1,)))
+
   
         return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
     
@@ -442,6 +492,7 @@ class FrankaReachTask:
         # target_q = current_q + 0.05 * torch.tanh(actions)
         target_q = self.dof_targets + self.dof_speed_scales * self.dt * self.actions * self.action_scale
         self.dof_targets[:] = torch.clamp(target_q, self.dof_lower_limits, self.dof_upper_limits)
+        # print(f"self.dof_targets: {self.dof_targets}")
 
         # sets the PD targets
         self.robot.control_dofs_position(self.dof_targets, envs_idx=self.envs_idx)
@@ -536,18 +587,28 @@ class FrankaReachTask:
         self.extras["log"]["obs/distance_to_goal"] = distance_to_goal.squeeze(1)
 
         return self.obs_buf, self.extras
-          
-    def reset(self):
-        envs_to_reset = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
-        # reset only the environments that are done
-        if envs_to_reset.numel() > 0:
-            self._init_robot(envs_to_reset)
-            new_goals = self._sample_hemisphere(num_points=envs_to_reset.shape[0])
-            self.goal_pos[envs_to_reset] = new_goals
-            self.goal.set_pos(new_goals, envs_idx=envs_to_reset)
-            self.episode_length_buf[envs_to_reset] = 0
-            self.reset_buf[envs_to_reset] = False
+    
+    def reset_idx(self, envs_to_reset):
+        """
+        Reset the environments specified by envs_to_reset.
+        This is a helper function to reset specific environments.
+        """
+        if envs_to_reset.numel() == 0:
+            return
 
+        # print(f"[DEBUG] Resetting environments: {envs_to_reset}")
+        self._init_robot(envs_idx=envs_to_reset)
+        new_goals = self._sample_hemisphere(num_points=envs_to_reset.shape[0])
+        self.goal_pos[envs_to_reset] = new_goals
+        self.goal.set_pos(new_goals, envs_idx=envs_to_reset)
+        self.episode_length_buf[envs_to_reset] = 0
+        self.reset_buf[envs_to_reset] = False
+        self.robot.zero_all_dofs_velocity(envs_to_reset)
+
+
+    def reset(self):
+        self.reset_buf[:] = False
+        self.reset_idx(torch.arange(self.num_envs, device=gs.device))
         return self.obs_buf, None
 
 if __name__ == "__main__":
@@ -558,10 +619,12 @@ if __name__ == "__main__":
     for res in range(5):
         print(f"Resetting environment {res + 1}")
         env.force_reset()
-        for _ in range(100):
+        for _ in range(500):
             actions = torch.randn((env.num_envs, 9), device=env.device)
+            actions = torch.zeros_like(actions)
             obs, rew, done, extras = env.step(actions)
             # print everything in a formatted way
             # print(f"Obs: {obs}, Reward: {rew}, Done: {done}, Extras: {extras}")
             if done.any():
+                print(f"\n\nResetting naturally.\n\n")
                 env.reset()    
