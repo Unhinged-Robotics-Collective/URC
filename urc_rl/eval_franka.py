@@ -27,8 +27,8 @@ def main():
     # reward_cfg["reward_scales"] = {}
 
     env = FrankaReachTask(
-        num_envs=1,
-        env_cfg={},
+        num_envs=10,
+        env_cfg=env_cfg,
         obs_cfg={},
         reward_cfg={},
         command_cfg={},

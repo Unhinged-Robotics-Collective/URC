@@ -13,6 +13,7 @@ import genesis as gs
 from franka_reach_task import FrankaReachTask
 
 
+
 def get_train_cfg(exp_name, max_iterations):
     train_cfg_dict = {
         "algorithm": {
@@ -23,7 +24,7 @@ def get_train_cfg(exp_name, max_iterations):
             "entropy_coef": 0.001,
             "num_learning_epochs": 8, # changed from 5 to 8
             "num_mini_batches": 4,
-            "learning_rate": 0.001,
+            "learning_rate": 0.0003, #0.001,
             "schedule": "adaptive",
             "gamma": 0.99,
             "lam": 0.95,
@@ -90,7 +91,7 @@ def main():
     # add date to the experiment name
     from datetime import datetime
     current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    args.exp_name = f"{args.exp_name}_{current_date}"
+    args.exp_name = f"{current_date}_{args.exp_name}"
 
     log_dir = f"logs/{args.exp_name}"
     env_cfg= get_cfgs()
@@ -113,5 +114,5 @@ if __name__ == "__main__":
 
 """
 # training
-python examples/locomotion/go2_train.py
+python examples/locomotion/go2_train.py -e franka_reach -B 1024
 """
