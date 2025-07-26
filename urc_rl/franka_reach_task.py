@@ -65,7 +65,7 @@ class FrankaReachTask:
         )
         # goal visualization
         self.goal = self.scene.add_entity(
-            gs.morphs.Sphere(radius=0.05, fixed=True, visualization=True, pos=(0.5, 0, 0.3))
+            gs.morphs.Sphere(radius=0.05, fixed=True, visualization=True, collision=False, pos=(0.5, 0, 0.3))
         )
 
         self.scene.build(n_envs=self.num_envs, env_spacing=(1.0, 1.0))
@@ -191,7 +191,7 @@ class FrankaReachTask:
 
         # Use 2σ to define a tight range around each joint angle
         std = torch.tensor([
-            0.2, 0.2, 0.2,      # joints 1–3
+            1.0, 0.2, 0.2,      # joints 1–3
             0.2, 0.2, 0.2,      # joints 4–6
             0.2, 0.005, 0.005,  # joint7, fingers
         ], device=self.device) * std_scale  # scaled
@@ -378,16 +378,22 @@ class FrankaReachTask:
         """
         reached_goal = self.reached_goal()
         timeouts = self.episode_length_buf >= self.max_episode_length  # [N,]
-        # print(f"[DEBUG] self.episode_length_buf[:5]: {self.episode_length_buf[:5]}")
-        # print(f"[DEBUG] self.max_episode_length: {self.max_episode_length}")
-        # print(f"[DEBUG] timeouts[:5]: {timeouts[:5]}")
-        # print(f"reached_goal: {reached_goal}")
-        # print(f"dones: {dones}")
-        final_dones = timeouts | reached_goal  # return True if either condition is met
-     
+
+        raw_dofs_vel = self.robot.get_dofs_velocity(envs_idx=self.envs_idx) # [N, 9]
+        # check if any robots went crazy with moving real fast or glitching
+        crazy_envs = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if (raw_dofs_vel.abs() > 5.0).any():
+            # get the envs of those robots
+            crazy_mask = (raw_dofs_vel.abs() > 5.0).any(dim=1)
+            crazy_envs = crazy_mask
+            print(f"[DEBUG] Robots {self.envs_idx[crazy_mask]} are moving too fast! Resetting them.")
+
+        final_dones = timeouts | reached_goal | crazy_envs  # return True if either condition is met
+
         self.extras["log"]["episode/num_reached_goal"] = reached_goal.sum().item()
         self.extras["log"]["episode/num_timeouts"] = timeouts.sum().item()
         self.extras["log"]["episode/num_final_dones"] = final_dones.sum().item()
+        self.extras["log"]["episode/num_crazy_envs "] = crazy_envs.sum().item()
         self.extras["time_outs"] = timeouts
 
 
@@ -548,6 +554,9 @@ class FrankaReachTask:
 
         raw_dofs_pos = self.robot.get_dofs_position(envs_idx=self.envs_idx) # [N, 9]
         raw_dofs_vel = self.robot.get_dofs_velocity(envs_idx=self.envs_idx) # [N, 9]
+        
+        # debug print of the maximum recorded velocity
+        # print(f"[DEBUG] Max dofs velocity: {raw_dofs_vel.max(dim=0).values.max().item():.4f}")
 
         # normalize dofs_pos and dofs_vel
         self.dof_pos = self.normalize_dof_pos(raw_dofs_pos)  # normalize dofs_pos to [-1, 1]
@@ -597,13 +606,13 @@ class FrankaReachTask:
             return
 
         # print(f"[DEBUG] Resetting environments: {envs_to_reset}")
+        self.robot.zero_all_dofs_velocity(envs_to_reset)
         self._init_robot(envs_idx=envs_to_reset)
         new_goals = self._sample_hemisphere(num_points=envs_to_reset.shape[0])
         self.goal_pos[envs_to_reset] = new_goals
         self.goal.set_pos(new_goals, envs_idx=envs_to_reset)
         self.episode_length_buf[envs_to_reset] = 0
         self.reset_buf[envs_to_reset] = False
-        self.robot.zero_all_dofs_velocity(envs_to_reset)
 
 
     def reset(self):
