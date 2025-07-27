@@ -14,7 +14,8 @@ from franka_reach_task import FrankaReachTask
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="franka_reach")
-    parser.add_argument("--ckpt", type=int, default=100)
+    parser.add_argument("-c", "--ckpt", type=int, default=100)
+    parser.add_argument("-n", "--num_envs", type=int, default=2)
     args = parser.parse_args()
 
     gs.init()
@@ -27,7 +28,7 @@ def main():
     # reward_cfg["reward_scales"] = {}
 
     env = FrankaReachTask(
-        num_envs=10,
+        num_envs=args.num_envs,
         env_cfg=env_cfg,
         obs_cfg={},
         reward_cfg={},
@@ -49,7 +50,7 @@ def main():
     policy = runner.get_inference_policy(device=gs.device)
 
     obs, _ = env.reset()
-    num_steps = 100
+    num_steps = 400
     with torch.no_grad():
         while True:
             for step in range(num_steps):
