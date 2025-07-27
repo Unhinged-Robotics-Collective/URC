@@ -236,7 +236,7 @@ class FrankaReachTask:
         # print(f"[DEBUG] envs_idx.shape: {envs_idx.shape}")
 
         # qpos = self._normal_sample_from_limits(envs_idx.shape[0])
-        qpos = self._normal_sample_from_default_pose(envs_idx.shape[0], std_scale=0.1)  # [envs_idx.shape[0], 9]
+        qpos = self._normal_sample_from_default_pose(envs_idx.shape[0], std_scale=1)  # [envs_idx.shape[0], 9]
         # print(f"[DEBUG] qpos.shape: {qpos.shape}")  
         # print(f"[DEBUG] self.dof_targets.shape: {self.dof_targets.shape}")  
 
@@ -369,6 +369,21 @@ class FrankaReachTask:
         reached = distance_to_goal < 0.1  # threshold for reaching the goal
         # print(f"[DEBUG] reached: {reached}")
         return reached
+
+    def forbidden_contact(self):
+        """Mask to reset envs that have collided with anything."""
+        # get contact info from the robot
+        contact_info = self.robot.get_contacts()
+        valid_mask = contact_info.get("valid_mask", None)
+
+
+        # valid_mask shape: (n_envs, n_contacts)
+        # envs_with_contacts shape: (n_envs,), True if any valid contact
+        envs_with_contacts = valid_mask.any(dim=1)
+        # print(f"[DEBUG] envs_with_contacts: {envs_with_contacts}")
+
+        return envs_with_contacts
+
     
     def get_dones(self):
         """
@@ -376,8 +391,8 @@ class FrankaReachTask:
         Returns a tensor of shape (num_envs,).
         Also logs the number of dones in self.extras["log"].
         """
-        reached_goal = self.reached_goal()
-        timeouts = self.episode_length_buf >= self.max_episode_length  # [N,]
+        reached_goal_envs = self.reached_goal()
+        timeout_envs = self.episode_length_buf >= self.max_episode_length  # [N,]
 
         raw_dofs_vel = self.robot.get_dofs_velocity(envs_idx=self.envs_idx) # [N, 9]
         # check if any robots went crazy with moving real fast or glitching
@@ -388,13 +403,16 @@ class FrankaReachTask:
             crazy_envs = crazy_mask
             print(f"[DEBUG] Robots {self.envs_idx[crazy_mask]} are moving too fast! Resetting them.")
 
-        final_dones = timeouts | reached_goal | crazy_envs  # return True if either condition is met
+        contact_envs = self.forbidden_contact()
 
-        self.extras["log"]["episode/num_reached_goal"] = reached_goal.sum().item()
-        self.extras["log"]["episode/num_timeouts"] = timeouts.sum().item()
+        final_dones = timeout_envs | reached_goal_envs | crazy_envs | contact_envs  # return True if either condition is met
+
+        self.extras["log"]["episode/num_reached_goal_envs"] = reached_goal_envs.sum().item()
+        self.extras["log"]["episode/num_timeout_envs"] = timeout_envs.sum().item()
         self.extras["log"]["episode/num_final_dones"] = final_dones.sum().item()
-        self.extras["log"]["episode/num_crazy_envs "] = crazy_envs.sum().item()
-        self.extras["time_outs"] = timeouts
+        self.extras["log"]["episode/num_contact_envs"] = contact_envs.sum().item()
+        self.extras["log"]["episode/num_crazy_envs"] = crazy_envs.sum().item()
+        self.extras["time_outs"] = timeout_envs
 
 
         return final_dones
