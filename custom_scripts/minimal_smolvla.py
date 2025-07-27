@@ -43,8 +43,11 @@ def create_minimal_batch(image_path, image2_path, image3_path, device='cuda:0'):
     # Add batch dimension and move to device
     tmp_ = {
             'image': image.unsqueeze(0).to(device),  # Shape: (1, 3, 256, 256)
+            'images.laptop': image.unsqueeze(0).to(device),  # Shape: (1, 3, 256, 256)
+            'images.phone': image.unsqueeze(0).to(device),  # Shape: (1, 3, 256, 256)
             'image2': image2.unsqueeze(0).to(device),  # Shape: (1, 3, 256, 256)
             'image3': image3.unsqueeze(0).to(device),  # Shape: (1, 3, 256, 256)
+            'images.front': image3.unsqueeze(0).to(device),  # Shape: (1, 3, 256, 256)
         }
     batch = {
         **{'observation.'+t : tmp_[t] for t in tmp_},
@@ -152,11 +155,18 @@ def initialize_smolvla_normalization_stats(policy):
     print("✓ Normalization stats initialized")
 
 if __name__ == "__main__":
-    policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
+    model_name = "lerobot/smolvla_base"
+    model_name = "Hartvi/smolvla"
+    # model_name = "masato-ka/smolvla_block_instruction"
+    policy = SmolVLAPolicy.from_pretrained(model_name)
+    print("policy", policy.state_dict().keys())
+    with open(model_name.replace("/", "_")+".txt", "w") as f:
+        print(policy.state_dict()["normalize_inputs.buffer_observation_state.mean"], file=f)
+    # exit()
     # print("policy", policy.__dict__.keys())
 
-    print("Initializing normalization statistics...")
-    initialize_smolvla_normalization_stats(policy)
+    # print("Initializing normalization statistics...")
+    # initialize_smolvla_normalization_stats(policy)
 
     # Set to evaluation mode
     policy.eval()
