@@ -82,8 +82,9 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="franka_reach")
-    parser.add_argument("-B", "--num_envs", type=int, default=1024)
+    parser.add_argument("-n", "--num_envs", type=int, default=1024)
     parser.add_argument("--max_iterations", type=int, default=3000)
+    parser.add_argument("-v", "--view", action="store_true", default=False, help="Show viewer during training")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu,logging_level="warning")
@@ -103,7 +104,7 @@ def main():
 
     pickle.dump([env_cfg, train_cfg], open(f"{log_dir}/cfgs.pkl", "wb"), )
 
-    env = FrankaReachTask(num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg={}, reward_cfg={}, command_cfg={}, show_viewer=False)
+    env = FrankaReachTask(num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg={}, reward_cfg={}, command_cfg={}, show_viewer=args.view)
     env.reset()
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
     runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
