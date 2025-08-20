@@ -1,0 +1,17 @@
+einops
+gymnasium
+termcolor
+draccus
+huggingface-hub
+serial
+deepdiff
+draccus
+safetensors
+datasets
+jsonlines
+av
+gym_pusht
+diffusers
+transformers
+num2words
+accelerate
