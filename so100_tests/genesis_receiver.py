@@ -8,64 +8,44 @@ from dataclasses import dataclass
 import numpy as np
 import zmq
 
-# ---------- Optional: Try to import Genesis, else fall back to a tiny mock ----------
-USING_MOCK = False
-try:
-    # Replace this import with the correct one for your Genesis installation
-    # For example, if the package exposes a 'genesis' namespace:
-    import genesis as gs  # noqa: F401
-except Exception as e:
-    USING_MOCK = True
-    print("[WARN] Genesis import failed; using MockGenesis. Reason:", e)
+# ---------- Import Genesis ----------
+import genesis as gs  # noqa: F401
 
-# ----- Simple mock to visualize the index fingertip as a moving point -----
-class MockGenesis:
-    def __init__(self):
-        self._pos = np.zeros(3, dtype=float)
-        print("[MockGenesis] Initialized. (No real physics, just printing positions)")
-
-    def set_index_tip_position(self, pos3):
-        self._pos[:] = pos3
-
-    def step(self):
-        # In a real sim you'd advance physics and render; we just print occasionally
-        pass
-
-    def render_text(self, text):
-        print(text)
-
-# ----- Replace these with your real Genesis scene wiring -----
 class GenesisAdapter:
     def __init__(self):
-        if USING_MOCK:
-            self.engine = MockGenesis()
-        else:
-            # TODO: initialize the actual Genesis engine, scene, and objects
-            # e.g., gs.Engine(), load assets, create actors, etc.
-            self.engine = self._init_real_genesis()
+        self.scene, self.sphere = self._init_real_genesis()
         self._last_print = 0.0
 
     def _init_real_genesis(self):
-        # Pseudocode placeholders; change to match the real Genesis API
-        # engine = gs.Engine(headless=False)
-        # scene = engine.create_scene()
-        # self.index_marker = scene.add_sphere(radius=0.02, color=(0.9, 0.2, 0.2))
-        # return engine
-        return MockGenesis()  # remove when you wire the real engine
+        gs.init(backend=gs.gpu)
+        scene = gs.Scene(
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(0, -3.5, 2.5),
+                camera_lookat=(0.0, 0.0, 0.5),
+                camera_fov=30,
+                max_FPS=60,
+            ),
+            sim_options=gs.options.SimOptions(dt=0.01),
+            show_viewer=True,
+        )
+        plane = scene.add_entity(gs.morphs.Plane())
+        sphere = scene.add_entity(
+            gs.morphs.Sphere(radius=0.02)
+        )
+        scene.build()
+        return scene, sphere
 
     def set_index_tip_position(self, pos3):
-        # If you created an object (e.g., a small sphere) to represent the fingertip,
-        # set its transform here. Replace with actual Genesis calls.
-        self.engine.set_index_tip_position(pos3)
+        self.sphere.set_pos(pos3)
 
     def step(self):
-        self.engine.step()
+        self.scene.step()
 
-    def maybe_debug_print(self, pos3):
+    def debug_print(self, pos3):
         now = time.time()
-        if now - self._last_print > 0.25:
+        if now - self._last_print > 0.5:
             self._last_print = now
-            self.engine.render_text(f"IndexTip @ {pos3}")
+            print(f"IndexTip @ {pos3}")
 
 # ---------- ZMQ Listener Thread ----------
 @dataclass
@@ -119,18 +99,15 @@ class LandmarkReceiver:
                 except Exception as e:
                     print("[SUB] Error parsing packet:", e)
 
-# ---------- Mapping from MediaPipe to Genesis space ----------
-# This maps normalized image coords to a small 3D box centered at the origin.
-# Tweak SCALE and OFFSET to fit your robot/scene.
-SCALE = np.array([0.4, 0.3, 0.4], dtype=float)  # meters
-OFFSET = np.array([0.0, 0.0, 0.6], dtype=float) # meters (e.g., 60 cm in front)
+# ---------- Mapping to Genesis space ----------
+SCALE = np.array([1.0, 1.0, 10.0], dtype=float)  # 
+SCALE = np.array([0, 0, 10.0], dtype=float)  # 
+OFFSET = np.array([0.0, 0.0, 0.5], dtype=float) #
 
-# MediaPipe uses image coords: origin top-left, y down. We flip Y to conventional up.
-# Z is relative depth (negative is closer); we negate it so closer -> larger +Z.
 def image_to_world(x, y, z):
-    xw = (x - 0.5) * SCALE[0] + OFFSET[0]
-    yw = (0.5 - y) * SCALE[1] + OFFSET[1]
-    zw = (-z) * SCALE[2] + OFFSET[2]
+    xw = x * SCALE[0] + OFFSET[0]
+    yw = y * SCALE[1] + OFFSET[1]
+    zw = z * SCALE[2] + OFFSET[2]
     return np.array([xw, yw, zw], dtype=float)
 
 # ---------- Main App ----------
@@ -171,7 +148,7 @@ if __name__ == "__main__":
                 if tip is not None:
                     pos = image_to_world(tip["x"], tip["y"], tip["z"])
                     sim.set_index_tip_position(pos)
-                    sim.maybe_debug_print(pos)
+                    sim.debug_print(pos)
 
             sim.step()
     except KeyboardInterrupt:

@@ -1,0 +1,9 @@
+##hand_sender:
+
+python hand_sender.py --bind tcp://*:5555 --topic hands --camera 0 --fps 60
+
+##genesis_reciever
+python genesis_receiver.py --connect tcp://localhost:5555 --topic hands --hz 120
+
+
+## IK:
