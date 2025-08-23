@@ -4,9 +4,10 @@ import math
 import genesis as gs
 from PIL import Image
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
+from itertools import chain
 
 import sys
 sys.path.append("/workspace/lerobot")
@@ -29,6 +30,20 @@ logger = logging.getLogger("Env logger")
 
 
 @dataclass
+class GenesisVLAConfig:
+    """VLA models can output a different number of outputs
+    than given in the genesis' urdf parser E.g. gripper has 2 joints vs 1."""
+    joint_mapping: tuple[int, ...] = ()
+
+    def map_joints(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.tensor(x[:, [self.joint_mapping]])
+
+class FrankaVLAConfig(GenesisVLAConfig):
+    joint_mapping: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 7)
+    """The last two joints (7, 8) are actually controlled together at index 7 by the smolvla models"""
+
+
+@dataclass
 class CamConfig:
     lookat: tuple[int, int, int] = (0, 0, 0)
     pos: tuple[int, int, int] = (1, 1, 1)
@@ -45,6 +60,7 @@ class EnvConfig:
     n_envs: int = 1
     action_scale: float = 1.0
     task: str = "Pick up the object."
+    vla_config: GenesisVLAConfig | None = None
 
     @classmethod
     def make_so_config(cls):
@@ -62,7 +78,7 @@ class EnvConfig:
         cam_poss = [CamConfig(), CamConfig(pos=(-1,1,1))]
         return cls(urdf_path="../assets/xml/franka_emika_panda/panda.xml",
                    cams=cam_poss,
-                   show=True)
+                   show=True, vla_config=FrankaVLAConfig())
 
     @classmethod
     def make_braccio_config(cls):
@@ -91,13 +107,13 @@ class EnvConfig:
 
 
 class ReachTask:
-    def __init__(self, config: EnvConfig, policy: SmolVLAPolicy | None | Any = None):
+    def __init__(self, env_config: EnvConfig, policy: SmolVLAPolicy | None | Any = None):
         if not hasattr(gs, "device"):
             logging.warning("Initializing Genesis on device %s & precision %s", gs.gpu, "f32") # type: ignore
             gs.init(backend=gs.gpu, precision="32") # type: ignore
-        self.config = config
+        self.env_config = env_config
         self.policy = policy
-        self.num_envs = config.n_envs
+        self.num_envs = env_config.n_envs
 
         self.num_obs = -1
         self.num_actions = -1  # 7 dof + 2 gripper fingers
@@ -122,20 +138,20 @@ class ReachTask:
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
-            show_viewer=config.show,
+            show_viewer=env_config.show,
         )
         self.plane = self.scene.add_entity(
             gs.morphs.Plane(),
         )
         self.robot = self.scene.add_entity(
-            gs.morphs.MJCF(file=self.config.urdf_path)
+            gs.morphs.MJCF(file=self.env_config.urdf_path)
         )
         self.goal = self.scene.add_entity(
             gs.morphs.Sphere(radius=0.05, fixed=True, visualization=True, collision=False, pos=(0.5, 0, 0.3))
         )
         self.cams = [self.scene.add_camera(
             **conf.__dict__
-        ) for conf in self.config.cams]
+        ) for conf in self.env_config.cams]
 
         self.scene.build(n_envs=self.num_envs, env_spacing=(1.0, 1.0))
 
@@ -154,7 +170,7 @@ class ReachTask:
         # robot observes its own joints
         self.num_actions = self.robot.n_dofs # type: ignore
         self.num_obs = self.robot.n_dofs # type: ignore
-        self.action_scale = config.action_scale
+        self.action_scale = env_config.action_scale
 
         # initialize buffers
         self.rew_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
@@ -212,6 +228,7 @@ class ReachTask:
 
     def step(self, actions: torch.Tensor):
         ### Act (set the PD controller targets)
+        assert actions.shape[1] == self.robot.n_dofs # type: ignore
         self._act(actions)
 
         ### Step the scene
@@ -228,9 +245,11 @@ class ReachTask:
         return self.observations, self.rew_buf, self.reset_buf
 
     def _act(self, actions: torch.Tensor):
-        actions = actions.to(self.device)
-        self.actions = actions.clone().clamp(-1.0, 1.0)
-        logger.info("robot dof: %s actions: %s", self.dof_speed_scales.shape[1], self.actions.shape[1])
+        if self.env_config.vla_config:
+            actions = self.env_config.vla_config.map_joints(actions)
+        self.actions = actions.to(self.device)
+        # self.actions = self.actions.clone().clamp(-1.0, 1.0)
+        logger.info("Robot dof: %s actions: %s", self.dof_speed_scales.shape[1], self.actions.shape[1])
         target_q = self.dof_targets + self.dof_speed_scales * self.dt * self.actions * self.action_scale
         self.dof_targets[:] = torch.clamp(target_q, self.dof_lower_limits, self.dof_upper_limits)
         self.robot.control_dofs_position(self.dof_targets, envs_idx=self.envs_idx) # type: ignore
@@ -240,7 +259,7 @@ class ReachTask:
         assert self.policy
         images: list[torch.Tensor] = [ torch.from_numpy(np.ascontiguousarray(cam.render(rgb=True)[0])).permute(2, 0, 1).unsqueeze(0).to(device=gs.device, dtype=torch.float32).div_(255.0) for cam in self.cams]
         observations: dict[str, str | torch.Tensor] = dict(zip(self.policy.config.input_features.keys(), [obs_dof, *images]))
-        observations["task"] = self.config.task
+        observations["task"] = self.env_config.task
         return observations # type: ignore
 
     def _get_dof_observations(self) -> gs.Tensor:
@@ -303,7 +322,7 @@ if __name__ == "__main__":
             """
             print(observations.keys())
             action: torch.Tensor = env.policy.select_action(observations) # type: ignore
-            observations, rew, done = env.step(action)
+            observations, rew, done = env.step(action) # type: ignore
             # env.render()
             # if _ % 10 == 0:
             #     im = Image.fromarray(env.render())

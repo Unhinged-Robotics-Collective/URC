@@ -1,0 +1,1 @@
+python eval_smolvla_genesis.py     --policy.path=Hartvi/smolvla     --env.type=franka     --eval.batch_size=10     --eval.n_episodes=10     --policy.use_amp=false     --policy.device=cuda 2>&1 | tee out.txt
