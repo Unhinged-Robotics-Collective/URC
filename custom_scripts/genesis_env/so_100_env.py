@@ -33,13 +33,29 @@ logger = logging.getLogger("Env logger")
 class GenesisVLAConfig:
     """VLA models can output a different number of outputs
     than given in the genesis' urdf parser E.g. gripper has 2 joints vs 1."""
-    joint_mapping: tuple[int, ...] = ()
+    joints: int
+    joint_mapping: tuple[tuple[int, ...] | int, ...] = ()
 
     def map_joints(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.tensor(x[:, [self.joint_mapping]])
+        joint_values = torch.zeros(x.shape[0], self.joints)
+        assert x.shape[1] == len(self.joint_mapping), f"{x.shape[1]} == {len(self.joint_mapping)}"
+        for r in range(x.shape[0]):
+            k = 0
+            for i in self.joint_mapping:
+                i: int | tuple[int, ...]
+                if isinstance(i, tuple):
+                    for ii in i:
+                        assert isinstance(ii, int)
+                        joint_values[r, ii] = x[r, k]
+                joint_values[r, i] = x[r, k]
+                k += 1
+        return joint_values
 
+
+@dataclass
 class FrankaVLAConfig(GenesisVLAConfig):
-    joint_mapping: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 7)
+    joints: int = 9
+    joint_mapping: tuple[tuple[int, ...] | int, ...] = (0, 1, 2, 3, 4, 5, 6, (7, 8))
     """The last two joints (7, 8) are actually controlled together at index 7 by the smolvla models"""
 
 
@@ -78,7 +94,7 @@ class EnvConfig:
         cam_poss = [CamConfig(), CamConfig(pos=(-1,1,1))]
         return cls(urdf_path="../assets/xml/franka_emika_panda/panda.xml",
                    cams=cam_poss,
-                   show=True, vla_config=FrankaVLAConfig())
+                   show=True, vla_config=FrankaVLAConfig(9))
 
     @classmethod
     def make_braccio_config(cls):
@@ -175,7 +191,6 @@ class ReachTask:
         # initialize buffers
         self.rew_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
         self.reset_buf = torch.ones((self.num_envs,), device=self.device, dtype=gs.tc_int)
-        self.episode_length_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_int)
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=gs.tc_float)
         self.dof_pos = torch.zeros_like(self.actions, device=self.device, dtype=gs.tc_float)
         self.dof_vel = torch.zeros_like(self.actions, device=self.device, dtype=gs.tc_float)
@@ -221,14 +236,15 @@ class ReachTask:
         envs_to_reset = self.envs_idx  # all env indices
 
         self._init_robot(envs_to_reset)
-        self.episode_length_buf[envs_to_reset] = 0
         self.reset_buf[envs_to_reset] = False
 
         return self.observations, None
 
     def step(self, actions: torch.Tensor):
         ### Act (set the PD controller targets)
-        assert actions.shape[1] == self.robot.n_dofs # type: ignore
+        if self.env_config.vla_config:
+            actions = self.env_config.vla_config.map_joints(actions)
+        assert actions.shape[1] == self.robot.n_dofs, f"{actions.shape[1]} == {self.robot.n_dofs}" # type: ignore
         self._act(actions)
 
         ### Step the scene
@@ -236,7 +252,6 @@ class ReachTask:
 
         ### Get observations and reward
         self.observations = self._get_observations()
-        self.episode_length_buf += 1
 
         ### Check if any envs are done
         # reset the environments that are done
@@ -245,8 +260,6 @@ class ReachTask:
         return self.observations, self.rew_buf, self.reset_buf
 
     def _act(self, actions: torch.Tensor):
-        if self.env_config.vla_config:
-            actions = self.env_config.vla_config.map_joints(actions)
         self.actions = actions.to(self.device)
         # self.actions = self.actions.clone().clamp(-1.0, 1.0)
         logger.info("Robot dof: %s actions: %s", self.dof_speed_scales.shape[1], self.actions.shape[1])
@@ -280,7 +293,6 @@ class ReachTask:
 
         self.robot.zero_all_dofs_velocity(envs_to_reset) # type: ignore
         self._init_robot(envs_idx=envs_to_reset)
-        self.episode_length_buf[envs_to_reset] = 0
         self.reset_buf[envs_to_reset] = False
 
     def reset(self):
@@ -313,7 +325,7 @@ if __name__ == "__main__":
         print(f"Resetting environment {res + 1}")
         observations, _ = env.force_reset()
         for _ in range(500):
-            action = torch.randn((env.num_envs, env.robot.n_qs), device=env.device) # type: ignore
+            action = torch.randn((env.num_envs, env.robot.n_dofs), device=env.device) # type: ignore
             # input_features = dict(input_features=observations, image_features=observations)
             """
             ERROR:genesis:ValueError: All image features are missing from the batch. At least one expected.
@@ -322,6 +334,7 @@ if __name__ == "__main__":
             """
             print(observations.keys())
             action: torch.Tensor = env.policy.select_action(observations) # type: ignore
+            print("action shape", action.shape)
             observations, rew, done = env.step(action) # type: ignore
             # env.render()
             # if _ % 10 == 0:
