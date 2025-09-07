@@ -49,12 +49,10 @@ class SingleFn(Protocol):
     def __call__(self, **kwargs: Any) -> None: ...
 
 
-def get_handler(single_f: SingleFn, **kwargs) -> mp.Process:
-    p = mp.Process(target=single_f, kwargs=kwargs)
-    return p
-
-def activate_all(ps: Iterable[mp.Process], keyword: str):
-    list(map(lambda x: exec("x." + keyword + "()"), ps))
+def get_handler(single_f: SingleFn, ctx: Any | None, **kwargs) -> mp.Process:
+    if ctx is not None:
+        return ctx.Process(target=single_f, daemon=False, kwargs=kwargs)
+    return mp.Process(target=single_f, daemon=False, kwargs=kwargs)
 
 
 if __name__ == "__main__":
