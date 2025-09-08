@@ -1,15 +1,18 @@
+import multiprocessing
+from multiprocessing.context import SpawnContext, SpawnProcess
 import time
 import math
+from dataclasses import dataclass
 import numpy as np
 import multiprocessing as mp
 from multiprocessing import Queue
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Iterable, Any
 from handle_processes import get_handler
 
 import cv2
 import mediapipe
 import queue as _queue  # for Empty
-from queue import Queue
+from queue import Queue, LifoQueue
 
 import threading
 
@@ -76,9 +79,9 @@ def process_cap(*, src: int | str, win_name: str, **kwargs):
     cap.release()
     cv2.destroyWindow(win_name)
 
-def process_keypoints(q_i: mp.Queue, q_o: mp.Queue, src, debug=False, **_):
 
-
+def process_keypoints(stop_event: threading.Event, q_o: mp.Queue, src: str | int, debug=False, **_):
+    """stop_event is actually a mp.Event but .pyi annotations are wrong"""
     mp_hands = mediapipe.solutions.hands # type: ignore
     hands = mp_hands.Hands()
     mpDraw = mediapipe.solutions.drawing_utils # type: ignore
@@ -87,32 +90,7 @@ def process_keypoints(q_i: mp.Queue, q_o: mp.Queue, src, debug=False, **_):
     win_name = f"Debug source {src}"
 
     try:
-        while True:
-            # non-blocking stop check
-            try:
-                msg = q_i.get_nowait()
-                if msg is None:
-                    print("EXITING")
-                    try:
-                        q_o.cancel_join_thread()
-                    except:
-                        ...
-                    try:
-                        q_o.close()
-                    except:
-                        ...
-                    try:
-                        q_i.cancel_join_thread()
-                    except:
-                        ...
-                    try:
-                        q_i.close()
-                    except:
-                        ...
-                    break
-            except _queue.Empty:
-                pass
-
+        while not stop_event.is_set():
             ok, img = cap.read()
             if not ok:
                 break
@@ -133,6 +111,13 @@ def process_keypoints(q_i: mp.Queue, q_o: mp.Queue, src, debug=False, **_):
                 if (cv2.waitKey(1) & 0xFF) == ord('q'):
                     break
     finally:
+        print("EXITING", src)
+        try:
+            q_o.cancel_join_thread()
+        except: ...
+        try:
+            q_o.close()
+        except: ...
         cap.release()
         if debug:
             cv2.destroyWindow(win_name)
@@ -157,6 +142,7 @@ def test_main():
     for p in ps: p.start()
     for p in ps: p.join()
 
+
 def read_features(q_i: Queue, q_o: mp.Queue):
     while True:
         try:
@@ -168,6 +154,62 @@ def read_features(q_i: Queue, q_o: mp.Queue):
             print(q_o.get(timeout=1))
         except _queue.Empty:
             pass
+
+
+class LandmarkListener:
+
+    def __init__(self, input_queue: mp.Queue):
+        self.q = LifoQueue()
+        self.t = threading.Thread(target=self.transfer_landmark, args=(input_queue, ), daemon=True)
+
+    def start(self):
+        self.t.start()
+
+    def transfer_landmark(self, q_o: mp.Queue):
+        while True:
+            try:
+                self.q.put_nowait(q_o.get(timeout=1))
+            except _queue.Empty:
+                pass
+
+
+class KeypointArgs(dict):
+    ctx: SpawnContext
+    stop_event: threading.Event  # actually mp.Event
+    q_o: mp.Queue
+    src: int | str
+    debug: bool
+
+
+class HandManager:
+    def __init__(self, webcam_ids: list[int], webcam_addresses: list[str], debug: bool = False):
+        self.webcam_ids: list[int] = webcam_ids
+        self.webcam_addresses: list[str] = webcam_addresses
+        self.all_cams: list[str | int] = self.webcam_ids + self.webcam_addresses
+
+        # spawn processes
+        ctx: SpawnContext = mp.get_context("spawn")  # single context everywhere
+
+        # get_cap_ids, droid_src
+        self.keypoint_kwargs: list[KeypointArgs] = []
+        self.keypoint_processes: list[mp.Process | SpawnProcess] = []
+        self.listeners: list[LandmarkListener] = []
+        self.stop_event = mp.Event()
+        for cam_src in self.all_cams:
+            kwarg = KeypointArgs(ctx=ctx, stop_event=self.stop_event, q_o=ctx.Queue(), src=cam_src, debug=debug)
+            self.keypoint_kwargs.append(kwarg)
+            self.keypoint_processes.append(get_handler(process_keypoints, **kwarg))
+            # create thread listeners
+            self.listeners.append(LandmarkListener(kwarg.q_o))
+
+    def start(self):
+        for proc in self.listeners: proc.start()
+        for proc in self.keypoint_processes: proc.start()
+
+    def stop(self):
+        self.stop_event.set()
+        for p in self.keypoint_processes: p.join()
+
 
 # ---------- launcher ----------
 def test_process_keypoints():
@@ -201,4 +243,4 @@ if __name__ == "__main__":
     # prefer spawn for OpenCV/Mediapipe stability
     mp.set_start_method("spawn", force=True)
     # test_main()
-    test_process_keypoints()
+    # test_process_keypoints()
