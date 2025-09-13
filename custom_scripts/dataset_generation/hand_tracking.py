@@ -3,6 +3,7 @@ from multiprocessing.context import SpawnContext, SpawnProcess
 import time
 import math
 from dataclasses import dataclass
+from turtle import listen
 import numpy as np
 import multiprocessing as mp
 from multiprocessing import Queue
@@ -14,6 +15,11 @@ import mediapipe
 import queue as _queue  # for Empty
 from queue import LifoQueue
 import threading
+
+class Landmark:
+    x: float
+    y: float
+    z: float
 
 
 def get_caps_ids() -> list[int]:
@@ -99,6 +105,19 @@ class HandManager:
         for proc in self.listeners: proc.start()
         for proc in self.keypoint_processes: proc.start()
         self.monitor_thread.start()
+
+
+    def get_latest_frames(self) -> list[list] | None:
+        ret = []
+        for listener in self.listeners:
+            if listener.q.qsize() == 0:
+                return None
+        for listener in self.listeners:
+            ret.append(listener.q.get_nowait())
+            # Delete because older positions shouldn't survive
+            listener.q.queue.clear()
+        return ret
+
 
     def stop(self):
         self.stop_event.set()

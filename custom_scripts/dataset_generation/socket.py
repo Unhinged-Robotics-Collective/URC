@@ -39,4 +39,3 @@ class XYZHandler:
         self.shm = shared_memory.SharedMemory(name=metadata.data_path, create=metadata.is_publisher, size=8 + metadata.num_rows * 3 * metadata.dtype.itemsize)
         self.counter = np.ndarray((1,), dtype=np.int64, buffer=self.shm.buf[:8])
         self.data = np.ndarray((metadata.num_rows, 3), dtype=metadata.dtype, buffer=self.shm.buf[8:])
-

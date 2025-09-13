@@ -52,8 +52,8 @@ class SingleFn(Protocol):
 
 def get_handler(single_f: SingleFn, ctx: SpawnContext | None = None, **kwargs) -> mp.Process | SpawnProcess:
     if ctx is not None:
-        return ctx.Process(target=single_f, daemon=False, kwargs=kwargs)
-    return mp.Process(target=single_f, daemon=False, kwargs=kwargs)
+        return ctx.Process(target=single_f, daemon=True, kwargs=kwargs)
+    return mp.Process(target=single_f, daemon=True, kwargs=kwargs)
 
 
 if __name__ == "__main__":

@@ -16,27 +16,12 @@ from queue import Queue, LifoQueue
 import threading
 
 from dataset_generation.handle_processes import get_handler
-from dataset_generation.hand_tracking import HandManager, process_keypoints
+from dataset_generation.hand_tracking import HandManager, process_keypoints, droid_src, get_caps_ids
 
 USE_DROID = False
 USE_WEBCAM = True
 USE_USB = True
 
-def get_caps_ids() -> list[int]:
-    ids = []
-    idx = 0
-    while True:
-        cap = cv2.VideoCapture(idx)
-        ok, _ = cap.read()
-        cap.release()
-        if not ok:
-            break
-        ids.append(idx)
-        idx += 1
-    return ids
-
-def droid_src() -> str:
-    return 'http://127.0.0.1:4747/video?640x480' if USE_USB else 'http://192.168.0.95:4747/video?640x480'
 
 # ---------- worker must be top-level and open its own capture ----------
 def process_cap(*, src: int | str, win_name: str, **kwargs):
@@ -94,7 +79,7 @@ def test_main():
             sources.append((cam_id, f"Webcam {cam_id}"))   # cam_id is an int
 
     if USE_DROID:
-        sources.append((droid_src(), "DroidCam"))
+        sources.append((droid_src(True), "DroidCam"))
 
     print("SOURCES:", sources)
     ps = [get_handler(process_cap, ctx=None, src=src, win_name=name) for src, name in sources]
@@ -143,7 +128,7 @@ def test_process_keypoints():
             sources.append((ctx.Queue(), ctx.Queue(), cam_id, True))   # cam_id is an int
 
     if USE_DROID:
-        sources.append((ctx.Queue(), ctx.Queue(), droid_src(), True))
+        sources.append((ctx.Queue(), ctx.Queue(), droid_src(True), True))
 
     print("SOURCES:", sources)
     ps = [get_handler(process_keypoints, ctx=ctx, q_i=qi, q_o=qo, src=src, debug=name) for qi, qo, src, name in sources]
@@ -167,7 +152,7 @@ if __name__ == "__main__":
     # test_main()
     # test_process_keypoints()
     cap_ids = get_caps_ids()
-    droid = [droid_src()]
+    droid = [droid_src(True)]
     droid = []
     hm = HandManager(cap_ids, droid, True)
     hm.start()
