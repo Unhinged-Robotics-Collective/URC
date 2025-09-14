@@ -16,6 +16,7 @@ import queue as _queue  # for Empty
 from queue import LifoQueue
 import threading
 
+
 class Landmark:
     x: float
     y: float
@@ -35,14 +36,17 @@ def get_caps_ids() -> list[int]:
         idx += 1
     return ids
 
+
 def droid_src(use_usb: bool) -> str:
     return 'http://127.0.0.1:4747/video?640x480' if use_usb else 'http://192.168.0.95:4747/video?640x480'
+
 
 class LandmarkListener:
 
     def __init__(self, input_queue: mp.Queue):
         self.q = LifoQueue()
         self.t = threading.Thread(target=self.transfer_landmark, args=(input_queue, ), daemon=True)
+        self.lock = threading.Lock()
 
     def start(self):
         self.t.start()
@@ -50,7 +54,14 @@ class LandmarkListener:
     def transfer_landmark(self, q_o: mp.Queue):
         while True:
             try:
-                self.q.put_nowait(q_o.get(timeout=1))
+                res: tuple[int, int, list[Landmark]] = q_o.get(timeout=1)
+                if res[1] == 0:
+                    # lock until all hands are populated
+                    self.lock.acquire()
+                self.q.put_nowait(res)
+                if res[1] == res[0] - 1:
+                    print("transferred landmarks")
+                    self.lock.release()
             except _queue.Empty:
                 pass
 
@@ -61,6 +72,9 @@ class KeypointArgs(dict):
     q_o: mp.Queue
     src: int | str
     debug: bool
+
+    def __getattr__(self, item: str):
+        return self[item]
 
 
 class HandManager:
@@ -82,7 +96,8 @@ class HandManager:
             self.keypoint_kwargs.append(kwarg)
             self.keypoint_processes.append(get_handler(process_keypoints, **kwarg))
             # create thread listeners
-            self.listeners.append(LandmarkListener(kwarg["q_o"]))
+            self.listeners.append(LandmarkListener(kwarg.q_o))
+        print("LISTENERS:", len(self.listeners))
 
         self.monitor_thread = threading.Thread(
             target=self._monitor_processes, daemon=True)
@@ -100,28 +115,49 @@ class HandManager:
             print("[WATCHDOG] Exception in monitor:", e)
             self.stop_event.set()
 
-
     def start(self):
         for proc in self.listeners: proc.start()
         for proc in self.keypoint_processes: proc.start()
         self.monitor_thread.start()
 
-
     def get_latest_frames(self) -> list[list] | None:
-        ret = []
-        for listener in self.listeners:
-            if listener.q.qsize() == 0:
-                return None
-        for listener in self.listeners:
-            ret.append(listener.q.get_nowait())
+        # self.xyz_handler.data[:] = 0.0
+        # listeners, hands
+        while True:
+            received = True
+            for listener in self.listeners:
+                # lock is release only when ALL hands are there
+                listener.lock.acquire()
+                if listener.q.qsize() == 0:
+                    listener.lock.release()
+                    received = False
+                    break
+                listener.lock.release()
+            if received:
+                print("RECEIVED")
+                break
+        ret = [list() for _ in self.listeners]
+        for k, listener in enumerate(self.listeners):
+            listener.lock.acquire()
+            res = listener.q.get_nowait() # e.g. (2, 1, xyz)
+            present_hands = [False] * res[0]
+            present_hands[res[1]] = True
+            ret[k].append(res)
+            # e.g. 2 hands => [0] == 2 => need one more after the first get
+            for _ in range(res[0] - 1):
+                res = listener.q.get_nowait() # e.g. (2, 0, xyz)
+                present_hands[res[1]] = True
+                ret[k].append(res)
+            assert all(present_hands), f"Hands present: {present_hands}"
             # Delete because older positions shouldn't survive
             listener.q.queue.clear()
+            listener.lock.release()
         return ret
-
 
     def stop(self):
         self.stop_event.set()
         for p in self.keypoint_processes: p.join()
+
 
 def process_keypoints(stop_event: threading.Event, q_o: mp.Queue, src: str | int, debug=False, **_):
     """stop_event is actually a mp.Event but .pyi annotations are wrong"""
@@ -143,9 +179,11 @@ def process_keypoints(stop_event: threading.Event, q_o: mp.Queue, src: str | int
             results = hands.process(imgRGB)
 
             if results.multi_hand_landmarks:
-                for handLms in results.multi_hand_landmarks:
+                hand_marks = list(results.multi_hand_landmarks)
+                num_hand_marks = len(hand_marks)
+                for k, handLms in enumerate(hand_marks):
                     lms = list(handLms.landmark)
-                    q_o.put_nowait(lms)
+                    q_o.put_nowait((num_hand_marks, k, lms))
                     if debug:
                         mpDraw.draw_landmarks(img, handLms, mp_hands.HAND_CONNECTIONS)
 
