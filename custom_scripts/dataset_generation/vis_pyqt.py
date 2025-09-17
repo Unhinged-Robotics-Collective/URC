@@ -7,8 +7,9 @@ import sys
 from logging import getLogger
 from multiprocessing import Event
 
-from dataset_generation.config import SUB_METADATA
+from dataset_generation.config import SUB_METADATA, NUM_FRAMES, HAND_POINTS
 from dataset_generation.socket import XYZMetadata, XYZHandler
+from dataset_generation.hand_to_pose import hand_to_points, hand_to_pose
 
 logger = getLogger(__name__)
 
@@ -31,8 +32,9 @@ class PositionVisualizer:
         world_axis.setSize(1, 1, 1)
         self.view.addItem(world_axis)
 
+        DEBUG_POINTS = 30 # points for extra visualizations
         # One scatter plot for all points
-        self.scatter = gl.GLScatterPlotItem(pos=np.zeros((self.sub_metadata.num_rows, 3)),
+        self.scatter = gl.GLScatterPlotItem(pos=np.zeros((self.sub_metadata.num_rows + DEBUG_POINTS, 3)),
                                             size=5,
                                             color=(1, 1, 1, 1),
                                             pxMode=True)
@@ -52,8 +54,19 @@ class PositionVisualizer:
         while not self.stop_event.is_set():
             if count == self.xyz_handler.counter[0]:
                 continue
-            self.latest_points = self.xyz_handler.data[:self.sub_metadata.num_rows] #.copy()
+            self.latest_points = self.xyz_handler.data.copy()
             count = self.xyz_handler.counter[0]
+            # debug points
+            for i in range(NUM_FRAMES // HAND_POINTS):
+                hand_points = self.latest_points[i * HAND_POINTS: (i+1) * HAND_POINTS]
+                extra_points1 = hand_to_points(hand_points)
+                R, t = hand_to_pose(hand_points)
+                xyz = np.eye(3) * 0.5
+                final_point = R.T @ xyz + t
+                print("BASE", t)
+                extra_points = np.concatenate((extra_points1, final_point), axis=0)
+                for k, extra_point in enumerate(extra_points):
+                    self.latest_points[len(self.latest_points) - 1 - i * len(extra_points) - k] = extra_point
 
     def update_scatter(self):
         """GUI: redraw scatter plot."""

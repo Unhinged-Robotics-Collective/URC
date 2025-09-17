@@ -18,7 +18,7 @@ import threading
 from sympy import true
 from dataset_generation.socket import XYZMetadata, XYZHandler
 from dataset_generation.hand_tracking import HandManager, get_caps_ids, droid_src, Landmark
-from dataset_generation.config import PUB_METADATA
+from dataset_generation.config import PUB_METADATA, MAX_NUM_HANDS
 
 logger = getLogger(__name__)
 
@@ -31,6 +31,7 @@ class HandPublisher:
         droid_ids = [droid_src(True)]
         droid_ids = []
         self.hand_manager = HandManager(cap_ids, droid_ids, debug=debug)
+        self.point_state = np.zeros(self.xyz_handler.data.shape, dtype=PUB_METADATA.dtype)
 
     def read_frames_to_buffer(self):
         logger.info("Start getting frames")
@@ -39,17 +40,25 @@ class HandPublisher:
             if latest_frames is not None:
                 self.set_data(latest_frames)
             self.xyz_handler.counter[0] += 1
-            latest_frames: list[list[tuple[int, int, list[Landmark]]]] | None = self.hand_manager.get_latest_frames()
+            latest_frames: list[list[tuple[int, int, list[Landmark]]]] | None = self.hand_manager.get_latest_frames(MAX_NUM_HANDS)
 
-    def set_data(self, latest_frames: list[list[tuple[int, int, list[Landmark]]]]):
+    def set_data(self, latest_frames: list[list[tuple[int, int, list[Landmark]]]], lerp: float = 0.2):
+        assert 0.0 <= lerp < 1.0, f"lerp: {lerp}"
         last_row = 0
         for i in range(len(latest_frames)):
             # if not None then it should contain something
             for j in range(len(latest_frames[0])):
                 l = self.landmarks_to_arrays(latest_frames[i][j][2])
                 last_row = (i+j+1)*l.shape[0]
-                self.xyz_handler.data[(i+j)*l.shape[0]:last_row, :] = l
+                tmp_slice = slice((i+j)*l.shape[0], last_row)
+                self.xyz_handler.data[tmp_slice, :] = self.lerp(lerp, self.xyz_handler.data[tmp_slice, :], l)
         self.xyz_handler.data[last_row:, :] = 0.0
+
+    @staticmethod
+    def lerp(lerp: float, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
+        if lerp > 0.0:
+            return lerp * arr1 + (1.0 - lerp) * arr2
+        return arr2
 
     @staticmethod
     def landmarks_to_arrays(landmarks: list[Landmark]):

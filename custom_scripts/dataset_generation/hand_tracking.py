@@ -120,7 +120,7 @@ class HandManager:
         for proc in self.keypoint_processes: proc.start()
         self.monitor_thread.start()
 
-    def get_latest_frames(self) -> list[list] | None:
+    def get_latest_frames(self, max_num_hands: int = 1) -> list[list] | None:
         # self.xyz_handler.data[:] = 0.0
         # listeners, hands
         while True:
@@ -134,20 +134,21 @@ class HandManager:
                     break
                 listener.lock.release()
             if received:
-                print("RECEIVED")
+                # print("RECEIVED")
                 break
         ret = [list() for _ in self.listeners]
         for k, listener in enumerate(self.listeners):
             listener.lock.acquire()
             res = listener.q.get_nowait() # e.g. (2, 1, xyz)
-            present_hands = [False] * res[0]
-            present_hands[res[1]] = True
+            present_hands = [False] * min(res[0], max_num_hands)
+            present_hands[min(res[1], max_num_hands - 1)] = True
             ret[k].append(res)
             # e.g. 2 hands => [0] == 2 => need one more after the first get
-            for _ in range(res[0] - 1):
+            for _ in range(min(res[0] - 1, max_num_hands - 1)):
                 res = listener.q.get_nowait() # e.g. (2, 0, xyz)
                 present_hands[res[1]] = True
                 ret[k].append(res)
+            # print("res", res)
             assert all(present_hands), f"Hands present: {present_hands}"
             # Delete because older positions shouldn't survive
             listener.q.queue.clear()
