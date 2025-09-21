@@ -9,29 +9,35 @@ from pytransform3d.rotations import passive_matrix_from_angle, R_id
 from pytransform3d.transformations import transform_from, concat
 
 import sys
-from logging import getLogger, DEBUG, lastResort
+from logging import getLogger
 
 import time
-from multiprocessing import shared_memory, Event
+import multiprocessing
+from multiprocessing import Event
 import threading
 
-from sympy import true
 from dataset_generation.socket import XYZMetadata, XYZHandler
-from dataset_generation.hand_tracking import HandManager, get_caps_ids, droid_src, Landmark
-from dataset_generation.config import PUB_METADATA, MAX_NUM_HANDS
+from dataset_generation.hand_tracking import HandManager, Landmark, Hands
+from dataset_generation import config
+import logging
 
+logging.basicConfig(
+    level=logging.DEBUG,               # Show DEBUG and above
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    filename="app.log",   # Write logs to a file
+    filemode="w",          # Overwrite each run (use "a" to append)
+)
 logger = getLogger(__name__)
+
 
 class HandPublisher:
     def __init__(self, stop_event: threading.Event, debug: bool = False):
         self.stop_event = stop_event
 
-        self.xyz_handler = XYZHandler(PUB_METADATA)
-        cap_ids = get_caps_ids()
-        droid_ids = [droid_src(True)]
-        droid_ids = []
-        self.hand_manager = HandManager(cap_ids, droid_ids, debug=debug)
-        self.point_state = np.zeros(self.xyz_handler.data.shape, dtype=PUB_METADATA.dtype)
+        self.xyz_handler = XYZHandler(config.PUB_METADATA)
+        self.hand_manager = HandManager(config.CAP_IDS, config.DROID_IDS, debug=debug)
+        self.point_state = np.zeros(self.xyz_handler.hands.shape, dtype=config.PUB_METADATA.dtype)
+        logger.info("Initialized hand publisher")
 
     def read_frames_to_buffer(self):
         logger.info("Start getting frames")
@@ -39,20 +45,20 @@ class HandPublisher:
         while not self.stop_event.is_set():
             if latest_frames is not None:
                 self.set_data(latest_frames)
-            self.xyz_handler.counter[0] += 1
-            latest_frames: list[list[tuple[int, int, list[Landmark]]]] | None = self.hand_manager.get_latest_frames(MAX_NUM_HANDS)
+            self.xyz_handler.update_counter()
+            latest_frames = self.hand_manager.get_latest_frames()
 
-    def set_data(self, latest_frames: list[list[tuple[int, int, list[Landmark]]]], lerp: float = 0.2):
+    def set_data(self, latest_frames: list[Hands], lerp: float = 0.2):
         assert 0.0 <= lerp < 1.0, f"lerp: {lerp}"
-        last_row = 0
-        for i in range(len(latest_frames)):
-            # if not None then it should contain something
-            for j in range(len(latest_frames[0])):
-                l = self.landmarks_to_arrays(latest_frames[i][j][2])
-                last_row = (i+j+1)*l.shape[0]
-                tmp_slice = slice((i+j)*l.shape[0], last_row)
-                self.xyz_handler.data[tmp_slice, :] = self.lerp(lerp, self.xyz_handler.data[tmp_slice, :], l)
-        self.xyz_handler.data[last_row:, :] = 0.0
+        for hands in latest_frames:
+            hand_counter = 0
+            for hand in hands.landmarks:
+                l = self.landmarks_to_arrays(hand)
+                logger.debug("hands: %s listener: %d hand: %d", self.xyz_handler.hands.shape, hands.listener_id, hand_counter)
+                self.xyz_handler.hands[hands.listener_id, hand_counter] = self.lerp(lerp, self.xyz_handler.hands[hands.listener_id, hand_counter], l)
+                hand_counter += 1
+            # self.xyz_handler.hands[hands.listener_id, hand_counter:, :] = 0.0
+        # print(self.xyz_handler.hands.shape)
 
     @staticmethod
     def lerp(lerp: float, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
@@ -61,7 +67,8 @@ class HandPublisher:
         return arr2
 
     @staticmethod
-    def landmarks_to_arrays(landmarks: list[Landmark]):
+    def landmarks_to_arrays(landmarks: list[Landmark]) -> np.ndarray:
+        """Returns: np array (21, 3)"""
         return np.array(list(map(lambda x: [x.x, x.y, x.z], landmarks)))
 
     def start(self):
@@ -78,6 +85,8 @@ class HandPublisher:
             pass
 
 def main():
+    config.init_caps()
+    multiprocessing.set_start_method("spawn", force=True)
     stop_event = Event()
     hand_publisher = HandPublisher(stop_event, True)
     try:

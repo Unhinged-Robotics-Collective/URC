@@ -87,11 +87,11 @@ class PositionVisualizer:
         logger.debug("Updating positions")
         count = 0
         while not self.stop_event.is_set():
-            if count == self.xyz_handler.counter[0]:
+            if count == self.xyz_handler._counter[0]:
                 continue
             # just update translations
-            self.transforms[:, :3, 3] = self.xyz_handler.data[:self.sub_metadata.num_rows]
-            count = self.xyz_handler.counter[0]
+            self.transforms[:, :3, 3] = self.xyz_handler.hands[:self.sub_metadata.num_rows]
+            count = self.xyz_handler._counter[0]
 
     def run(self):
         vis = o3d.visualization.Visualizer()

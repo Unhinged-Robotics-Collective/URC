@@ -21,8 +21,8 @@ def generate_data(metadata: XYZMetadata, stop_event: threading.Event):
     xyz_handler = XYZHandler(metadata)
     while not stop_event.is_set():
         r = np.random.randn(metadata.num_rows, 3)
-        xyz_handler.data[:] = r
-        xyz_handler.counter[0] += 1
+        xyz_handler.hands[:] = r
+        xyz_handler._counter[0] += 1
         time.sleep(0.1)
 
 
@@ -30,9 +30,9 @@ def read_data(metadata: XYZMetadata, stop_event: threading.Event):
     xyz_handler = XYZHandler(metadata)
     counter = 0
     while not stop_event.is_set():
-        if counter == xyz_handler.counter[0]: continue
-        print(xyz_handler.data)
-        counter = xyz_handler.counter[0]
+        if counter == xyz_handler._counter[0]: continue
+        print(xyz_handler.hands)
+        counter = xyz_handler._counter[0]
 
 
 if __name__ == "__main__":

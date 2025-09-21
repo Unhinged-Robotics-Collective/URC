@@ -1,13 +1,26 @@
+# import os
+# os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"  # sometimes helps
+# os.environ["QT_QPA_PLATFORM"] = "offscreen"
 import numpy as np
+from PyQt5 import QtGui, QtWidgets
+# fmt = QtGui.QSurfaceFormat()
+# fmt.setRenderableType(QtGui.QSurfaceFormat.OpenGL)
+# fmt.setVersion(3, 3)
+# fmt.setProfile(QtGui.QSurfaceFormat.CoreProfile)
+# fmt.setSwapBehavior(QtGui.QSurfaceFormat.DoubleBuffer)
+# fmt.setRedBufferSize(8)
+# fmt.setGreenBufferSize(8)
+# fmt.setBlueBufferSize(8)
+# fmt.setAlphaBufferSize(8)
+# QtGui.QSurfaceFormat.setDefaultFormat(fmt)
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
-from PyQt5 import QtWidgets
 import threading
 import sys
 from logging import getLogger
 from multiprocessing import Event
 
-from dataset_generation.config import SUB_METADATA, NUM_FRAMES, HAND_POINTS
+from dataset_generation import config
 from dataset_generation.socket import XYZMetadata, XYZHandler
 from dataset_generation.hand_to_pose import hand_to_points, hand_to_pose
 
@@ -52,26 +65,31 @@ class PositionVisualizer:
         """Background: pull latest positions from shared memory."""
         count = 0
         while not self.stop_event.is_set():
-            if count == self.xyz_handler.counter[0]:
+            if count == self.xyz_handler.get_counter():
                 continue
-            self.latest_points = self.xyz_handler.data.copy()
-            count = self.xyz_handler.counter[0]
+            # print("UPDATING POSITIONS")
+            self.latest_points = self.xyz_handler.hands.copy()
+            """(listeners, num hands per listener, 21, 3)"""
+            count = self.xyz_handler.get_counter()
             # debug points
-            for i in range(NUM_FRAMES // HAND_POINTS):
-                hand_points = self.latest_points[i * HAND_POINTS: (i+1) * HAND_POINTS]
-                extra_points1 = hand_to_points(hand_points)
-                R, t = hand_to_pose(hand_points)
-                xyz = np.eye(3) * 0.5
-                final_point = R.T @ xyz + t
-                print("BASE", t)
-                extra_points = np.concatenate((extra_points1, final_point), axis=0)
-                for k, extra_point in enumerate(extra_points):
-                    self.latest_points[len(self.latest_points) - 1 - i * len(extra_points) - k] = extra_point
+            for listener_idx in range(config.NUM_SRCS):
+                for hand_idx in range(config.NUM_HANDS_PER_SRC):
+                    hand_points = self.latest_points[listener_idx, hand_idx]
+                    # TODO: visualize points
+                    # extra_points1 = hand_to_points(hand_points)
+                    # R, t = hand_to_pose(hand_points)
+                    # xyz = np.eye(3) * 0.5
+                    # final_point = R.T @ xyz + t
+                    # print("BASE", t)
+                    # extra_points = np.concatenate((extra_points1, final_point), axis=0)
+                    # for k, extra_point in enumerate(extra_points):
+                    #     self.latest_points[len(self.latest_points) - 1 - i * len(extra_points) - k] = extra_point
 
     def update_scatter(self):
         """GUI: redraw scatter plot."""
         if hasattr(self, "latest_points"):
-            self.scatter.setData(pos=self.latest_points)
+            print(self.latest_points.reshape(-1, 3))
+            self.scatter.setData(pos=self.latest_points.reshape(-1, 3))
 
     def run(self):
         sys.exit(self.app.exec_())
@@ -79,7 +97,10 @@ class PositionVisualizer:
 
 def main():
     stop_event = Event()
-    vis = PositionVisualizer(stop_event, SUB_METADATA)
+    # import os
+    # os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    config.init_caps()
+    vis = PositionVisualizer(stop_event, config.SUB_METADATA)
     vis.run()
 
 

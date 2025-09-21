@@ -2,19 +2,26 @@ import multiprocessing
 from multiprocessing.context import SpawnContext, SpawnProcess
 import time
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from turtle import listen
 import numpy as np
 import multiprocessing as mp
-from multiprocessing import Queue
+# from multiprocessing import Queue
 from typing import TYPE_CHECKING, Callable, Iterable, Any
 from dataset_generation.handle_processes import get_handler
+from dataset_generation import config
 
 import cv2
 import mediapipe
 import queue as _queue  # for Empty
-from queue import LifoQueue
+from queue import LifoQueue, Queue, Full, Empty
 import threading
+
+
+@dataclass
+class Hands:
+    listener_id: int = -1
+    landmarks: list[list["Landmark"]] = field(default_factory=list)
 
 
 class Landmark:
@@ -23,45 +30,23 @@ class Landmark:
     z: float
 
 
-def get_caps_ids() -> list[int]:
-    ids = []
-    idx = 0
-    while True:
-        cap = cv2.VideoCapture(idx)
-        ok, _ = cap.read()
-        cap.release()
-        if not ok:
-            break
-        ids.append(idx)
-        idx += 1
-    return ids
-
-
-def droid_src(use_usb: bool) -> str:
-    return 'http://127.0.0.1:4747/video?640x480' if use_usb else 'http://192.168.0.95:4747/video?640x480'
-
-
 class LandmarkListener:
 
-    def __init__(self, input_queue: mp.Queue):
-        self.q = LifoQueue()
+    def __init__(self, input_queue: "mp.Queue[list[list[Landmark]]]"):
+        self.q: Queue[list[list[Landmark]]] = Queue(maxsize=config.NUM_HANDS_PER_SRC)
         self.t = threading.Thread(target=self.transfer_landmark, args=(input_queue, ), daemon=True)
-        self.lock = threading.Lock()
 
     def start(self):
         self.t.start()
 
-    def transfer_landmark(self, q_o: mp.Queue):
+    def transfer_landmark(self, q_o: "mp.Queue[list[list[Landmark]]]"):
         while True:
             try:
-                res: tuple[int, int, list[Landmark]] = q_o.get(timeout=1)
-                if res[1] == 0:
-                    # lock until all hands are populated
-                    self.lock.acquire()
-                self.q.put_nowait(res)
-                if res[1] == res[0] - 1:
-                    print("transferred landmarks")
-                    self.lock.release()
+                res: list[list[Landmark]] = q_o.get(timeout=1)
+                try:
+                    self.q.put_nowait(res)
+                except Full as e:
+                    pass
             except _queue.Empty:
                 pass
 
@@ -69,7 +54,7 @@ class LandmarkListener:
 class KeypointArgs(dict):
     ctx: SpawnContext
     stop_event: threading.Event  # actually mp.Event
-    q_o: mp.Queue
+    q_o: "mp.Queue[list[list[Landmark]]]"
     src: int | str
     debug: bool
 
@@ -92,12 +77,11 @@ class HandManager:
         self.listeners: list[LandmarkListener] = []
         self.stop_event = mp.Event()
         for cam_src in self.all_cams:
-            kwarg = KeypointArgs(ctx=ctx, stop_event=self.stop_event, q_o=ctx.Queue(), src=cam_src, debug=debug)
+            kwarg = KeypointArgs(ctx=ctx, stop_event=self.stop_event, q_o=ctx.Queue(maxsize=config.NUM_HANDS_PER_SRC), src=cam_src, debug=debug)
             self.keypoint_kwargs.append(kwarg)
             self.keypoint_processes.append(get_handler(process_keypoints, **kwarg))
             # create thread listeners
             self.listeners.append(LandmarkListener(kwarg.q_o))
-        print("LISTENERS:", len(self.listeners))
 
         self.monitor_thread = threading.Thread(
             target=self._monitor_processes, daemon=True)
@@ -120,39 +104,15 @@ class HandManager:
         for proc in self.keypoint_processes: proc.start()
         self.monitor_thread.start()
 
-    def get_latest_frames(self, max_num_hands: int = 1) -> list[list] | None:
-        # self.xyz_handler.data[:] = 0.0
-        # listeners, hands
-        while True:
-            received = True
-            for listener in self.listeners:
-                # lock is release only when ALL hands are there
-                listener.lock.acquire()
-                if listener.q.qsize() == 0:
-                    listener.lock.release()
-                    received = False
-                    break
-                listener.lock.release()
-            if received:
-                # print("RECEIVED")
-                break
-        ret = [list() for _ in self.listeners]
+    def get_latest_frames(self) -> list[Hands] | None:
+        ret = []
         for k, listener in enumerate(self.listeners):
-            listener.lock.acquire()
-            res = listener.q.get_nowait() # e.g. (2, 1, xyz)
-            present_hands = [False] * min(res[0], max_num_hands)
-            present_hands[min(res[1], max_num_hands - 1)] = True
-            ret[k].append(res)
-            # e.g. 2 hands => [0] == 2 => need one more after the first get
-            for _ in range(min(res[0] - 1, max_num_hands - 1)):
-                res = listener.q.get_nowait() # e.g. (2, 0, xyz)
-                present_hands[res[1]] = True
-                ret[k].append(res)
-            # print("res", res)
-            assert all(present_hands), f"Hands present: {present_hands}"
-            # Delete because older positions shouldn't survive
-            listener.q.queue.clear()
-            listener.lock.release()
+            try:
+                h = Hands(listener_id=k, landmarks=listener.q.get_nowait())
+                # Delete because older positions shouldn't survive
+                listener.q.queue.clear()
+                ret.append(h)
+            except Empty as e: pass
         return ret
 
     def stop(self):
@@ -160,32 +120,42 @@ class HandManager:
         for p in self.keypoint_processes: p.join()
 
 
-def process_keypoints(stop_event: threading.Event, q_o: mp.Queue, src: str | int, debug=False, **_):
+def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Landmark]]]", src: str | int, debug=False, **_):
     """stop_event is actually a mp.Event but .pyi annotations are wrong"""
     mp_hands = mediapipe.solutions.hands # type: ignore
-    hands = mp_hands.Hands()
+    hands = mp_hands.Hands(
+        static_image_mode=False,
+        max_num_hands=config.NUM_HANDS_PER_SRC, # TODO: this should be divided by number of cameras
+        model_complexity=0,       # lighter model
+        min_detection_confidence=0.6,
+        min_tracking_confidence=0.5,
+    )
     mpDraw = mediapipe.solutions.drawing_utils # type: ignore
 
     cap = cv2.VideoCapture(src)
+    # cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # might be ignored by some backends
     win_name = f"Debug source {src}"
-
+    frame_id = 0
     try:
         while not stop_event.is_set():
             ok, img = cap.read()
             if not ok:
                 break
-
+            # frame_id += 1
+            # if frame_id % 2 == 0:
+            #     continue
             img = cv2.flip(img, 1)
             imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             results = hands.process(imgRGB)
 
             if results.multi_hand_landmarks:
-                hand_marks = list(results.multi_hand_landmarks)
-                num_hand_marks = len(hand_marks)
-                for k, handLms in enumerate(hand_marks):
-                    lms = list(handLms.landmark)
-                    q_o.put_nowait((num_hand_marks, k, lms))
-                    if debug:
+                hand_marks = list(results.multi_hand_landmarks)[:config.NUM_HANDS_PER_SRC]
+                try:
+                    q_o.put_nowait([list(handLms.landmark) for handLms in hand_marks])
+                except Full as e:
+                    pass
+                if debug:
+                    for handLms in hand_marks:
                         mpDraw.draw_landmarks(img, handLms, mp_hands.HAND_CONNECTIONS)
 
             if debug:
