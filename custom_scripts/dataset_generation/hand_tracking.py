@@ -133,7 +133,9 @@ def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Land
     mpDraw = mediapipe.solutions.drawing_utils # type: ignore
 
     cap = cv2.VideoCapture(src)
-    # cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # might be ignored by some backends
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.IMAGE_SIZE[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.IMAGE_SIZE[1])
+    # # cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # might be ignored by some backends
     win_name = f"Debug source {src}"
     frame_id = 0
     try:
@@ -141,9 +143,10 @@ def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Land
             ok, img = cap.read()
             if not ok:
                 break
-            # frame_id += 1
-            # if frame_id % 2 == 0:
-            #     continue
+            print(img.shape)
+            frame_id += 1
+            if frame_id % 2 == 0:
+                continue
             img = cv2.flip(img, 1)
             imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             results = hands.process(imgRGB)

@@ -1,4 +1,5 @@
 import numpy as np
+from dataclasses import dataclass, field
 
 from dataset_generation.socket import XYZMetadata
 import logging
@@ -7,19 +8,44 @@ logger = logging.getLogger(__name__)
 
 # TODO: split shared memory to have a region for each hand so each region can be written to and read from independently, so we don't have to use locks
 
-USE_DROID = True
+USE_DROID = False
 DEBUG = True
 NUM_HANDS_PER_SRC = 1
 
+IMAGE_SIZE = (640, 480)
 
 HAND_POINTS = 21
 NUM_FRAMES = 100
 HAND_DEBUG_POINTS = 100
 PUB_SUB_PATH = "vis_pos"
+CAMS = ()
+
+@dataclass
+class CamInfo:
+    w: float = IMAGE_SIZE[0]
+    h: float = IMAGE_SIZE[1]
+    x0: float = -1
+    y0: float = -1
+    f: float = -1
+    R: np.ndarray = field(default_factory=lambda: np.eye(3, dtype=float))
+    t: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=float))
+
+    def __post_init__(self):
+        if self.x0 < 0:
+            self.x0 = self.w / 2.0
+        if self.y0 < 0:
+            self.y0 = self.h / 2.0
+
+    def unnormalize(self, arr: np.ndarray) -> np.ndarray:
+        """Accepts: (N, 2)"""
+        assert arr.shape[1] == 2
+        assert np.min(arr) >= 0.0, f"min: {np.min(arr)}"
+        assert np.max(arr) <= 1.0, f"max: {np.max(arr)}"
+        return np.concatenate([arr[:, 0] * self.w, arr[:, 1] * self.h], axis=1)
 
 
 def init_caps():
-    global CAP_IDS, DROID_IDS, USE_DROID, PUB_METADATA, SUB_METADATA, NUM_SRCS, SRCS
+    global CAP_IDS, DROID_IDS, USE_DROID, PUB_METADATA, SUB_METADATA, NUM_SRCS, SRCS, CAMS
     import cv2
     def get_caps_ids() -> list[int]:
         ids = []
@@ -36,12 +62,13 @@ def init_caps():
 
 
     def droid_src(use_usb: bool) -> str:
-        return 'http://127.0.0.1:4747/video?640x480' if use_usb else 'http://192.168.0.95:4747/video?640x480'
+        return f'http://127.0.0.1:4747/video?{IMAGE_SIZE[0]}x{IMAGE_SIZE[1]}' if use_usb else f'http://192.168.0.95:4747/video?{IMAGE_SIZE[0]}x{IMAGE_SIZE[1]}'
 
     CAP_IDS = get_caps_ids()
     DROID_IDS = [droid_src(True)] if USE_DROID else []
     SRCS = CAP_IDS + DROID_IDS
     NUM_SRCS = max(len(SRCS), len(DROID_IDS) + 1) # at least one camera must be present
+    CAMS = tuple(CamInfo() for _ in range(NUM_SRCS))
 
     PUB_METADATA, SUB_METADATA = XYZMetadata.create_pair(
         NUM_SRCS,

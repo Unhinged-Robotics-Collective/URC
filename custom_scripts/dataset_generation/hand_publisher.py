@@ -54,6 +54,7 @@ class HandPublisher:
             hand_counter = 0
             for hand in hands.landmarks:
                 l = self.landmarks_to_arrays(hand)
+                # print("L:",l)
                 logger.debug("hands: %s listener: %d hand: %d", self.xyz_handler.hands.shape, hands.listener_id, hand_counter)
                 self.xyz_handler.hands[hands.listener_id, hand_counter] = self.lerp(lerp, self.xyz_handler.hands[hands.listener_id, hand_counter], l)
                 hand_counter += 1

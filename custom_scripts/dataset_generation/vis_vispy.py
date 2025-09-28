@@ -9,10 +9,21 @@ from vispy import app, scene
 
 from dataset_generation import config
 from dataset_generation.socket import XYZMetadata, XYZHandler
-from dataset_generation.deforms import umeyama_transform
+from dataset_generation.deforms import umeyama_transform, calculate_cam_matrices
 from dataset_generation.hand_to_pose import hand_to_points, hand_to_pose
 
+from enum import Enum, auto
+
+
 logger = getLogger(__name__)
+
+
+class VisTransforms(Enum):
+    UMEYAMA = auto()
+    TRIANGULATE = auto()
+
+
+SELECTED_TRANSFORM = VisTransforms.TRIANGULATE
 
 
 class PositionVisualizer(scene.SceneCanvas):
@@ -33,7 +44,6 @@ class PositionVisualizer(scene.SceneCanvas):
         axis = scene.visuals.XYZAxis(parent=self.view.scene)
 
         # Scatter plot for points
-        DEBUG_POINTS = 30
         num_points = self.sub_metadata.num_rows
         self.scatter = scene.visuals.Markers(parent=self.view.scene)
         self.scatter.set_data(np.zeros((num_points, 3)),
@@ -54,8 +64,6 @@ class PositionVisualizer(scene.SceneCanvas):
         while not self.stop_event.is_set():
             if count == self.xyz_handler.get_counter():
                 continue
-            print("LATEST POINTS", self.xyz_handler.hands.min(), self.xyz_handler.hands.max())
-            # self.latest_points = self.xyz_handler.hands.copy().reshape(-1, 3)
             count = self.xyz_handler.get_counter()
             # debug points expansion would go here
 
@@ -64,22 +72,24 @@ class PositionVisualizer(scene.SceneCanvas):
         if self.latest_points is not None:
             if self.count == self.xyz_handler.get_counter():
                 return
-            # print("LATEST POINTS", self.xyz_handler.hands.shape)
-            # print("LATEST POINTS", self.xyz_handler.hands.shape, self.xyz_handler.hands.min(), self.xyz_handler.hands.max())
             try:
-                hands1 = self.xyz_handler.hands[0][0]
-                hands2 = self.xyz_handler.hands[1][0]
-                new_hands1 = umeyama_transform(hands1.T, hands2.T)
-                # print("new hands", new_hands1)
-                self.latest_points = self.xyz_handler.hands.copy()
-                print("copied")
-                self.latest_points[0][0] = new_hands1.T
-                print("asigned")
+                hands1: np.ndarray = self.xyz_handler.hands[0][0] # 21, 3
+                hands2: np.ndarray = self.xyz_handler.hands[1][0] # 21, 3
                 self.count = self.xyz_handler.get_counter()
-                print("updated counter")
-                self.scatter.set_data(self.latest_points.reshape(-1, 3), face_color=(1, 1, 1, 1), size=5)
-                print("setted data")
-
+                match SELECTED_TRANSFORM:
+                    case VisTransforms.UMEYAMA:
+                        new_hands1 = umeyama_transform(hands1.T, hands2.T)
+                        self.latest_points = self.xyz_handler.hands.copy()
+                        self.latest_points[0][0] = new_hands1.T
+                        self.scatter.set_data(self.latest_points.reshape(-1, 3), face_color=(1, 1, 1, 1), size=5)
+                    case VisTransforms.TRIANGULATE:
+                        unnorm_uv1 = config.CAMS[0].unnormalize(hands1[:, :2])
+                        unnorm_uv2 = config.CAMS[1].unnormalize(hands2[:, :2])
+                        hand_xyz = calculate_cam_matrices(config.CAMS[0], config.CAMS[1], unnorm_uv1, unnorm_uv2)
+                        self.scatter.set_data(hand_xyz, face_color=(1, 1, 1, 1), size=5)
+                    case _:
+                        raise ValueError(f"Invalid option selected: {_}")
+                        # default do nothing
             except Exception as e:
                 print(e)
 
