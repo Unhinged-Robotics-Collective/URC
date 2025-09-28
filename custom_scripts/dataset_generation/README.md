@@ -10,6 +10,7 @@
 - use homogenous coordinates: p_1 = \lambda \cdot [u,v,1] => the lambda is probably the distance along the z axis of the camera
 - i know the point correspondence between camera, so I just wanna find the line intersection, lambda_1 & lambda_2
     - => \lambda_1 \cdot p_1 = R @ \lambda_2 \cdot p_2 + \vec{t} => LSQ of this
+- OR JUST simply triangulate and hope that the points are precise enough
 6. Process data to move one single hand in 3 axes - preferably without ground truth
 NOTES: https://docs.opencv.org/4.x/da/de9/tutorial_py_epipolar_geometry.html
 https://en.wikipedia.org/wiki/Perspective-n-Point

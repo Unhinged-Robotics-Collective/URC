@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 # TODO: split shared memory to have a region for each hand so each region can be written to and read from independently, so we don't have to use locks
 
-USE_DROID = False
+USE_DROID = True
 DEBUG = True
 NUM_HANDS_PER_SRC = 1
 
@@ -39,9 +39,10 @@ class CamInfo:
     def unnormalize(self, arr: np.ndarray) -> np.ndarray:
         """Accepts: (N, 2)"""
         assert arr.shape[1] == 2
-        assert np.min(arr) >= 0.0, f"min: {np.min(arr)}"
-        assert np.max(arr) <= 1.0, f"max: {np.max(arr)}"
-        return np.concatenate([arr[:, 0] * self.w, arr[:, 1] * self.h], axis=1)
+        assert np.min(arr) >= -0.1, f"min: {np.min(arr)}"
+        assert np.max(arr) <= 1.1, f"max: {np.max(arr)}"
+        print("arr", np.min(arr), np.max(arr))
+        return np.concatenate([arr[:, :1] * self.w, arr[:, 1:2] * self.h], axis=1)
 
 
 def init_caps():

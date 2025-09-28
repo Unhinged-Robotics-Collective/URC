@@ -143,7 +143,6 @@ def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Land
             ok, img = cap.read()
             if not ok:
                 break
-            print(img.shape)
             frame_id += 1
             if frame_id % 2 == 0:
                 continue

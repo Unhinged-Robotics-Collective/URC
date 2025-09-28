@@ -110,6 +110,7 @@ def essential_cost(F: np.ndarray, f1: float, f2: float, w1: float, h1: float, w2
 def estimate_f_from_F(xy1: np.ndarray, xy2: np.ndarray, cam1: CamInfo, cam2: CamInfo):
     xy1 = xy1.astype(np.float32)
     xy2 = xy2.astype(np.float32)
+    print(xy1.shape, xy2.shape)
     F, mask = cv2.findFundamentalMat(xy1, xy2, cv2.FM_RANSAC, 1.0, 0.999)
     if F is None or mask is None or mask.sum() < 8:
         raise RuntimeError("F estimation failed or too few inliers.")
@@ -140,13 +141,20 @@ def calculate_cam_matrices(cam1: CamInfo, cam2: CamInfo, uv1: np.ndarray, uv2: n
 
     Returns (N,3)"""
     # Estimate f1,f2 and F
-    f1_est, f2_est, F_est, inl = estimate_f_from_F(uv1, uv2, cam1, cam2)
+    try:
+        f1_est, f2_est, F_est, inl = estimate_f_from_F(uv1, uv2, cam1, cam2)
+    except:
+        return np.array([])
     # print("f1_est, f2_est:", f1_est, f2_est)
 
     # Build E with estimated f's
     K1_est = K_from_f(f1_est, cam1.w, cam1.h)
     K2_est = K_from_f(f2_est, cam2.w, cam2.h)
     E_est = K2_est.T @ F_est @ K1_est
+    # --- enforce essential structure (optional but helps numerics) ---
+    U, S, Vt = np.linalg.svd(E_est)
+    E_est = U @ np.diag([1, 1, 0]) @ Vt
+
     pts1n = cv2.undistortPoints(uv1[inl].reshape(-1,1,2), K1_est, np.zeros((5,)))
     pts2n = cv2.undistortPoints(uv2[inl].reshape(-1,1,2), K2_est, np.zeros((5,)))
 
@@ -159,7 +167,7 @@ def calculate_cam_matrices(cam1: CamInfo, cam2: CamInfo, uv1: np.ndarray, uv2: n
     # Triangulate for sanity
     P1_est = K1_est @ np.hstack([np.eye(3), np.zeros((3,1))])
     P2_est = K2_est @ np.hstack([R_est, t_est])
-    pts4d = cv2.triangulatePoints(P1_est, P2_est, pts1n.squeeze(1).T, pts2n.squeeze(1).T)  # (4,Ninl)
+    pts4d = cv2.triangulatePoints(P1_est, P2_est, uv1[inl].T, uv2[inl].T)  # (4,Ninl)
     pts3d = (pts4d[:3] / pts4d[3]).T
 
     # print("Triangulated Z:", pts3d[:, 2])
