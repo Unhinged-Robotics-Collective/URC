@@ -48,19 +48,32 @@ class HandPublisher:
             self.xyz_handler.update_counter()
             latest_frames = self.hand_manager.get_latest_frames()
 
+    @staticmethod
+    def mix_in_distance(xyz: np.ndarray, scale=10.0):
+        assert xyz.shape[0] == 21, f"{xyz=}"
+        def segment_dist(x: np.ndarray):
+            return np.mean(np.sqrt(np.sum(np.diff(x, axis=0)**2, axis=1)))
+        thumb_dists = segment_dist(xyz[1:5, 0:2])
+        index_dists = segment_dist(xyz[5:9, 0:2])
+        middle_dists = segment_dist(xyz[9:13, 0:2])
+        ring_dists = segment_dist(xyz[13:17, 0:2])
+        pinky_dists = segment_dist(xyz[17:21, 0:2])
+        return (config.MAX_HAND_SIZE / (scale * max(thumb_dists, index_dists, middle_dists, ring_dists, pinky_dists) * config.NORMALIZATION_CONSTANT)) ** config.DIST_EXPONENT
+
     def set_data(self, latest_frames: list[Hands], lerp: float = 0.2):
         assert 0.0 <= lerp < 1.0, f"lerp: {lerp}"
         for hands in latest_frames:
             hand_counter = 0
             for hand in hands.landmarks:
                 l = self.landmarks_to_arrays(hand)
-                # print("L:",l)
                 logger.info("hands: %s listener: %d hand: %d", self.xyz_handler.hands.shape, hands.listener_id, hand_counter)
-                print("hands: %s listener: %d hand: %d" % (self.xyz_handler.hands.shape, hands.listener_id, hand_counter))
+                # print("hands: %s listener: %d hand: %d" % (self.xyz_handler.hands.shape, hands.listener_id, hand_counter))
                 self.xyz_handler.hands[hands.listener_id, hand_counter] = self.lerp(lerp, self.xyz_handler.hands[hands.listener_id, hand_counter], l)
+                if config.MIXIN_DISTANCE:
+                    dist = self.mix_in_distance(self.xyz_handler.hands[hands.listener_id, hand_counter])
+                    print("MIXIN", dist)
+                    self.xyz_handler.hands[hands.listener_id, hand_counter, :, 2] += dist
                 hand_counter += 1
-            # self.xyz_handler.hands[hands.listener_id, hand_counter:, :] = 0.0
-        # print(self.xyz_handler.hands.shape)
 
     @staticmethod
     def lerp(lerp: float, arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:

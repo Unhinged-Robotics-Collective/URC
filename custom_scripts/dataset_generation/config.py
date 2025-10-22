@@ -7,8 +7,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 # TODO: split shared memory to have a region for each hand so each region can be written to and read from independently, so we don't have to use locks
+# hand z axis is estimated using the distance between joints on each finger.
+# when I move the hand to cover the whole screen, the largest distance is ~1.8 or so
+# so to have distance at camera position be == 0, we have to inverse the distance
+MAX_HAND_SIZE = 1.85
+NORMALIZATION_CONSTANT = 8
+DIST_EXPONENT = 1.15
 
-USE_DROID = True
+MIXIN_DISTANCE = True
+USE_DROID = False
 DEBUG = True
 NUM_HANDS_PER_SRC = 1
 

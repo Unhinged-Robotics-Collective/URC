@@ -19,11 +19,12 @@ logger = getLogger(__name__)
 
 
 class VisTransforms(Enum):
+    NONE = auto()
     UMEYAMA = auto()
     TRIANGULATE = auto()
 
 
-SELECTED_TRANSFORM = VisTransforms.TRIANGULATE
+SELECTED_TRANSFORM = VisTransforms.NONE
 
 
 class PositionVisualizer(scene.SceneCanvas):
@@ -74,16 +75,20 @@ class PositionVisualizer(scene.SceneCanvas):
                 return
             # try:
             print("hands", self.xyz_handler.hands.shape)
-            hands1: np.ndarray = self.xyz_handler.hands[0][0] # 21, 3
-            hands2: np.ndarray = self.xyz_handler.hands[1][0] # 21, 3
             self.count = self.xyz_handler.get_counter()
             match SELECTED_TRANSFORM:
+                case VisTransforms.NONE:
+                    self.scatter.set_data(self.xyz_handler.hands.reshape(-1, 3), face_color=(1, 1, 1, 1), size=5)
                 case VisTransforms.UMEYAMA:
+                    hands1: np.ndarray = self.xyz_handler.hands[0][0] # 21, 3
+                    hands2: np.ndarray = self.xyz_handler.hands[1][0] # 21, 3
                     new_hands1 = umeyama_transform(hands1.T, hands2.T)
                     self.latest_points = self.xyz_handler.hands.copy()
                     self.latest_points[0][0] = new_hands1.T
                     self.scatter.set_data(self.latest_points.reshape(-1, 3), face_color=(1, 1, 1, 1), size=5)
                 case VisTransforms.TRIANGULATE:
+                    hands1: np.ndarray = self.xyz_handler.hands[0][0] # 21, 3
+                    hands2: np.ndarray = self.xyz_handler.hands[1][0] # 21, 3
                     print("TRIANGULATE")
                     unnorm_uv1 = config.CAMS[0].unnormalize(hands1[:, :2])
                     unnorm_uv2 = config.CAMS[1].unnormalize(hands2[:, :2])
