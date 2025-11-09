@@ -14,9 +14,10 @@ MAX_HAND_SIZE = 1.85
 NORMALIZATION_CONSTANT = 8
 DIST_EXPONENT = 1.15
 
-MIXIN_DISTANCE = True
+MIXIN_DISTANCE = False
 USE_DROID = False
 DEBUG = True
+RECORD = True
 NUM_HANDS_PER_SRC = 1
 
 IMAGE_SIZE = (640, 480)
@@ -87,3 +88,17 @@ def init_caps():
         PUB_SUB_PATH)
     print("NUM SRCS", NUM_SRCS)
     logger.info("PUB %s SUB %s", PUB_METADATA, SUB_METADATA)
+
+def match_formula(points: list[list[list[list[float]]]], dists: list[float]):
+    """
+    Calibration procedure:
+    2 components:
+    1. rotation invariance - +- dx
+    2. calibrated distance etalons - more absolute distance
+    """
+    assert len(points) == dists, f"{len(points)} == {dists}"
+    """
+    each set of points[i] was recorded at a certain distance
+    define: points[i] = N frames of different poses of the hand at different distances
+    dists[i] = some value in meters
+    """

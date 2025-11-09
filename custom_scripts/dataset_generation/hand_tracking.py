@@ -1,4 +1,5 @@
 import multiprocessing
+from pathlib import Path
 from multiprocessing.context import SpawnContext, SpawnProcess
 import time
 import math
@@ -16,6 +17,11 @@ import mediapipe
 import queue as _queue  # for Empty
 from queue import LifoQueue, Queue, Full, Empty
 import threading
+from datetime import datetime
+
+
+def get_time_stamp():
+    return str(datetime.now()).replace(".", "-").replace(":", "-").replace(" ", "-")
 
 
 @dataclass
@@ -57,6 +63,7 @@ class KeypointArgs(dict):
     q_o: "mp.Queue[list[list[Landmark]]]"
     src: int | str
     debug: bool
+    record: Path | str | None
 
     def __getattr__(self, item: str):
         return self[item]
@@ -77,7 +84,14 @@ class HandManager:
         self.listeners: list[LandmarkListener] = []
         self.stop_event = mp.Event()
         for cam_src in self.all_cams:
-            kwarg = KeypointArgs(ctx=ctx, stop_event=self.stop_event, q_o=ctx.Queue(maxsize=config.NUM_HANDS_PER_SRC), src=cam_src, debug=debug)
+            kwarg = KeypointArgs(
+                ctx=ctx,
+                stop_event=self.stop_event,
+                q_o=ctx.Queue(maxsize=config.NUM_HANDS_PER_SRC),
+                src=cam_src,
+                debug=debug,
+                record=get_time_stamp()+".csv" if config.RECORD else None,
+            )
             self.keypoint_kwargs.append(kwarg)
             self.keypoint_processes.append(get_handler(process_keypoints, **kwarg))
             # create thread listeners
@@ -120,8 +134,16 @@ class HandManager:
         for p in self.keypoint_processes: p.join()
 
 
-def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Landmark]]]", src: str | int, debug=False, **_):
+def process_keypoints(
+        stop_event: threading.Event,
+        q_o: "mp.Queue[list[list[Landmark]]]",
+        src: str | int,
+        debug:bool=False,
+        record:Path|str|None=None,
+        **_,
+    ):
     """stop_event is actually a mp.Event but .pyi annotations are wrong"""
+    dist: float = 0.3 # meters
     mp_hands = mediapipe.solutions.hands # type: ignore
     hands = mp_hands.Hands(
         static_image_mode=False,
@@ -138,6 +160,9 @@ def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Land
     # # cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # might be ignored by some backends
     win_name = f"Debug source {src}"
     frame_id = 0
+    f = None
+    if record:
+        f = open(record, mode="w", encoding="utf-8")
     try:
         while not stop_event.is_set():
             ok, img = cap.read()
@@ -150,10 +175,12 @@ def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Land
             imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             results = hands.process(imgRGB)
 
+            hand_points: list[list[Landmark]] =[[]]
             if results.multi_hand_landmarks:
                 hand_marks = list(results.multi_hand_landmarks)[:config.NUM_HANDS_PER_SRC]
+                hand_points = [list(handLms.landmark) for handLms in hand_marks]
                 try:
-                    q_o.put_nowait([list(handLms.landmark) for handLms in hand_marks])
+                    q_o.put_nowait(hand_points)
                 except Full as e:
                     pass
                 if debug:
@@ -161,10 +188,21 @@ def process_keypoints(stop_event: threading.Event, q_o: "mp.Queue[list[list[Land
                         mpDraw.draw_landmarks(img, handLms, mp_hands.HAND_CONNECTIONS)
 
             if debug:
+                cv2.putText(img, f"Dist: {dist}", (50, 50), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (50, 100, 200), 2, cv2.LINE_AA)
                 cv2.imshow(win_name, img)
-                if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
                     break
+                elif key == ord('r') and f:
+                    assert len(hand_points) == 1, f"Only 1 hand permitted for distance data collection, not {len(hand_points)=}"
+                    f.write(f"{dist},"+",".join(",".join(f"{point.x},{point.y},{point.z}" for point in hand) for hand in hand_points)+"\n")
+                elif key == ord("+"):
+                    dist += 0.1
+                elif key == ord("-"):
+                    dist -= 0.1
     finally:
+        if f:
+            f.close()
         print("EXITING", src)
         try:
             q_o.cancel_join_thread()
