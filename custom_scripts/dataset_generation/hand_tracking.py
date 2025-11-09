@@ -70,7 +70,7 @@ class KeypointArgs(dict):
 
 
 class HandManager:
-    def __init__(self, webcam_ids: list[int], webcam_addresses: list[str], debug: bool = False):
+    def __init__(self, webcam_ids: list[int], webcam_addresses: list[str], stop_event: threading.Event, debug: bool = False):
         self.webcam_ids: list[int] = webcam_ids
         self.webcam_addresses: list[str] = webcam_addresses
         self.all_cams: list[str | int] = self.webcam_ids + self.webcam_addresses
@@ -82,7 +82,7 @@ class HandManager:
         self.keypoint_kwargs: list[KeypointArgs] = []
         self.keypoint_processes: list[mp.Process | SpawnProcess] = []
         self.listeners: list[LandmarkListener] = []
-        self.stop_event = mp.Event()
+        self.stop_event = stop_event
         for cam_src in self.all_cams:
             kwarg = KeypointArgs(
                 ctx=ctx,
@@ -203,7 +203,6 @@ def process_keypoints(
     finally:
         if f:
             f.close()
-        print("EXITING", src)
         try:
             q_o.cancel_join_thread()
         except: ...
@@ -213,3 +212,4 @@ def process_keypoints(
         cap.release()
         if debug:
             cv2.destroyWindow(win_name)
+        print("EXITING", src)

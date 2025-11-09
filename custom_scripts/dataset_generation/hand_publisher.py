@@ -35,7 +35,7 @@ class HandPublisher:
         self.stop_event = stop_event
 
         self.xyz_handler = XYZHandler(config.PUB_METADATA)
-        self.hand_manager = HandManager(config.CAP_IDS, config.DROID_IDS, debug=debug)
+        self.hand_manager = HandManager(config.CAP_IDS, config.DROID_IDS, stop_event=stop_event, debug=debug)
         self.point_state = np.zeros(self.xyz_handler.hands.shape, dtype=config.PUB_METADATA.dtype)
         logger.info("Initialized hand publisher")
 
@@ -93,11 +93,15 @@ class HandPublisher:
         self.t.start()
 
     def stop(self):
+        print("before hand manager stop")
         self.hand_manager.stop()
+        print("after hand manager stop")
         try:
             self.xyz_handler.close()   # <-- ensure unlink happens only here
+            print("after handler stop")
         except Exception:
             pass
+        print("after exception stop")
 
 def main():
     config.init_caps()
@@ -108,6 +112,9 @@ def main():
         hand_publisher.start()
         while True:  # keep running until Ctrl+C
             time.sleep(0.5)
+            print("sleeping")
+            if stop_event.is_set():
+                break
     except KeyboardInterrupt:
         print("Stopping...")
         hand_publisher.stop()     # calls xyz_handler.close()
