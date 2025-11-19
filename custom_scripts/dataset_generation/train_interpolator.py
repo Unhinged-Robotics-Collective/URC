@@ -4,6 +4,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
 
 
 def make_model(X: np.ndarray, y: np.ndarray, predictor = SVR(kernel="rbf", C=2.0, epsilon=0.05, gamma="scale")) -> Pipeline:
@@ -67,7 +69,13 @@ if __name__ == "__main__":
         random_state=42,
         n_jobs=-1
     )
-    model = make_model(X, y, rf)
+
+    poly_model = make_pipeline(
+        PolynomialFeatures(degree=2, include_bias=False),
+        LinearRegression()
+    )
+
+    model = make_model(X, y, poly_model)
     x_new = np.random.rand(63)            # shape (63,)
     x_new = x_new.reshape(1, -1)          # shape (1, 63)
 

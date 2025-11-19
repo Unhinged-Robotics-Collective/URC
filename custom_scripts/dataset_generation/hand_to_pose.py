@@ -5,7 +5,6 @@ index 8 => tip of index finger
 When grasping, the finger usually moves about joint 5
 index 4 => tip of thumb
 """
-from turtle import forward
 import numpy as np
 
 def hand_to_points(xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

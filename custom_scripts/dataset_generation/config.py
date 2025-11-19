@@ -10,11 +10,12 @@ logger = logging.getLogger(__name__)
 # hand z axis is estimated using the distance between joints on each finger.
 # when I move the hand to cover the whole screen, the largest distance is ~1.8 or so
 # so to have distance at camera position be == 0, we have to inverse the distance
-MAX_HAND_SIZE = 1.85
+MAX_HAND_SIZE = 18.5
 NORMALIZATION_CONSTANT = 8
-DIST_EXPONENT = 1.15
+DIST_EXPONENT = 1.145
+TOTAL_SCALE = 0.01
 
-MIXIN_DISTANCE = False
+MIXIN_DISTANCE = True
 USE_DROID = False
 DEBUG = True
 RECORD = True

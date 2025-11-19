@@ -64,9 +64,9 @@ class HandPublisher:
         middle_dists = segment_dist(xyz[9:13, 0:2])
         ring_dists = segment_dist(xyz[13:17, 0:2])
         pinky_dists = segment_dist(xyz[17:21, 0:2])
-        return (config.MAX_HAND_SIZE / (scale * max(thumb_dists, index_dists, middle_dists, ring_dists, pinky_dists) * config.NORMALIZATION_CONSTANT)) ** config.DIST_EXPONENT
+        return config.TOTAL_SCALE * (config.MAX_HAND_SIZE / (scale * max(thumb_dists, index_dists, middle_dists, ring_dists, pinky_dists))) ** config.DIST_EXPONENT
 
-    def set_data(self, latest_frames: list[Hands], lerp: float = 0.2):
+    def set_data(self, latest_frames: list[Hands], lerp: float = 0.5):
         assert 0.0 <= lerp < 1.0, f"lerp: {lerp}"
         for hands in latest_frames:
             hand_counter = 0
@@ -77,12 +77,13 @@ class HandPublisher:
                     pred = self.model.predict(l.reshape(1, -1))[0]
                     print("Predicted distance", float(pred))
                     l[:, 2] += float(pred)
-                # logger.info("hands: %s listener: %d hand: %d", self.xyz_handler.hands.shape, hands.listener_id, hand_counter)
                 hand_vals = self.lerp(lerp, self.xyz_handler.hands[hands.listener_id, hand_counter], l)
                 self.xyz_handler.hands[hands.listener_id, hand_counter] = hand_vals
                 if config.MIXIN_DISTANCE:
-                    dist = self.mix_in_distance(self.xyz_handler.hands[hands.listener_id, hand_counter])
+                    dist = self.mix_in_distance(hand_vals)
                     self.xyz_handler.hands[hands.listener_id, hand_counter, :, 2] += dist
+                    self.xyz_handler.hands[hands.listener_id, hand_counter, :, :2] *= dist
+                    print("MIXIN DIST", dist)
                 hand_counter += 1
 
     @staticmethod
