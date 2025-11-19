@@ -18,6 +18,7 @@ import queue as _queue  # for Empty
 from queue import LifoQueue, Queue, Full, Empty
 import threading
 from datetime import datetime
+from multiprocessing.synchronize import Event as EventType
 
 
 def get_time_stamp():
@@ -59,7 +60,7 @@ class LandmarkListener:
 
 class KeypointArgs(dict):
     ctx: SpawnContext
-    stop_event: threading.Event  # actually mp.Event
+    stop_event: EventType  # actually mp.Event
     q_o: "mp.Queue[list[list[Landmark]]]"
     src: int | str
     debug: bool
@@ -70,7 +71,7 @@ class KeypointArgs(dict):
 
 
 class HandManager:
-    def __init__(self, webcam_ids: list[int], webcam_addresses: list[str], stop_event: threading.Event, debug: bool = False):
+    def __init__(self, webcam_ids: list[int], webcam_addresses: list[str], stop_event: EventType, debug: bool = False):
         self.webcam_ids: list[int] = webcam_ids
         self.webcam_addresses: list[str] = webcam_addresses
         self.all_cams: list[str | int] = self.webcam_ids + self.webcam_addresses
@@ -135,7 +136,7 @@ class HandManager:
 
 
 def process_keypoints(
-        stop_event: threading.Event,
+        stop_event: EventType,
         q_o: "mp.Queue[list[list[Landmark]]]",
         src: str | int,
         debug:bool=False,

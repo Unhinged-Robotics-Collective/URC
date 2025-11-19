@@ -21,6 +21,11 @@ from dataset_generation.hand_tracking import HandManager, Landmark, Hands
 from dataset_generation import config
 import logging
 
+
+from multiprocessing.synchronize import Event as EventType
+from dataset_generation.train_interpolator import train_model
+from sklearn.pipeline import Pipeline
+
 logging.basicConfig(
     level=logging.DEBUG,               # Show DEBUG and above
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -31,13 +36,14 @@ logger = getLogger(__name__)
 
 
 class HandPublisher:
-    def __init__(self, stop_event: threading.Event, debug: bool = False):
+    def __init__(self, stop_event: EventType, model: Pipeline | None, debug: bool = False):
         self.stop_event = stop_event
 
         self.xyz_handler = XYZHandler(config.PUB_METADATA)
         self.hand_manager = HandManager(config.CAP_IDS, config.DROID_IDS, stop_event=stop_event, debug=debug)
         self.point_state = np.zeros(self.xyz_handler.hands.shape, dtype=config.PUB_METADATA.dtype)
         logger.info("Initialized hand publisher")
+        self.model = model
 
     def read_frames_to_buffer(self):
         logger.info("Start getting frames")
@@ -66,12 +72,16 @@ class HandPublisher:
             hand_counter = 0
             for hand in hands.landmarks:
                 l = self.landmarks_to_arrays(hand)
-                logger.info("hands: %s listener: %d hand: %d", self.xyz_handler.hands.shape, hands.listener_id, hand_counter)
-                # print("hands: %s listener: %d hand: %d" % (self.xyz_handler.hands.shape, hands.listener_id, hand_counter))
-                self.xyz_handler.hands[hands.listener_id, hand_counter] = self.lerp(lerp, self.xyz_handler.hands[hands.listener_id, hand_counter], l)
+                pred = 0.0
+                if self.model:
+                    pred = self.model.predict(l.reshape(1, -1))[0]
+                    print("Predicted distance", float(pred))
+                    l[:, 2] += float(pred)
+                # logger.info("hands: %s listener: %d hand: %d", self.xyz_handler.hands.shape, hands.listener_id, hand_counter)
+                hand_vals = self.lerp(lerp, self.xyz_handler.hands[hands.listener_id, hand_counter], l)
+                self.xyz_handler.hands[hands.listener_id, hand_counter] = hand_vals
                 if config.MIXIN_DISTANCE:
                     dist = self.mix_in_distance(self.xyz_handler.hands[hands.listener_id, hand_counter])
-                    print("MIXIN", dist)
                     self.xyz_handler.hands[hands.listener_id, hand_counter, :, 2] += dist
                 hand_counter += 1
 
@@ -103,16 +113,29 @@ class HandPublisher:
             pass
         print("after exception stop")
 
+
+def _parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(
+                    prog='Hand position publisher',
+                    description='Visualize hand positions')
+    parser.add_argument('--train-file', required=False, help="File based on which to train distance estimator")
+    return parser.parse_args()
+
 def main():
+    args = _parse_args()
+    print(args)
+    model = None
+    if args.train_file:
+        model = train_model(args.train_file)
     config.init_caps()
     multiprocessing.set_start_method("spawn", force=True)
     stop_event = Event()
-    hand_publisher = HandPublisher(stop_event, True)
+    hand_publisher = HandPublisher(stop_event, model=model, debug=True)
     try:
         hand_publisher.start()
         while True:  # keep running until Ctrl+C
             time.sleep(0.5)
-            print("sleeping")
             if stop_event.is_set():
                 break
     except KeyboardInterrupt:

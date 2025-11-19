@@ -14,6 +14,7 @@ from dataset_generation.hand_to_pose import hand_to_points, hand_to_pose
 
 from enum import Enum, auto
 
+from multiprocessing.synchronize import Event as EventType
 
 logger = getLogger(__name__)
 
@@ -28,7 +29,7 @@ SELECTED_TRANSFORM = VisTransforms.NONE
 
 
 class PositionVisualizer(scene.SceneCanvas):
-    def __init__(self, stop_event: Event, sub_metadata: XYZMetadata):
+    def __init__(self, stop_event: EventType, sub_metadata: XYZMetadata):
         super().__init__(keys="interactive", size=(800, 600), title="Position Visualizer", show=True)
         self.unfreeze()
         self.count = 0
@@ -42,11 +43,11 @@ class PositionVisualizer(scene.SceneCanvas):
         self.view.camera = scene.cameras.TurntableCamera(fov=45, azimuth=45, elevation=20, distance=2.5)
 
         # Add world axis
-        axis = scene.visuals.XYZAxis(parent=self.view.scene)
+        axis = scene.visuals.XYZAxis(parent=self.view.scene)  # type: ignore[attr-defined]
 
         # Scatter plot for points
         self.num_points = self.sub_metadata.num_rows
-        self.scatter = scene.visuals.Markers(parent=self.view.scene)
+        self.scatter = scene.visuals.Markers(parent=self.view.scene)  # type: ignore[attr-defined]
         self.scatter.set_data(np.zeros((self.num_points, 3)),
                               face_color=(1, 1, 1, 1),
                               size=5)
@@ -78,6 +79,8 @@ class PositionVisualizer(scene.SceneCanvas):
             self.count = self.xyz_handler.get_counter()
             match SELECTED_TRANSFORM:
                 case VisTransforms.NONE:
+                    hand_data = self.xyz_handler.hands
+                    print("hand data", hand_data.shape)
                     self.scatter.set_data(self.xyz_handler.hands.reshape(-1, 3), face_color=(1, 1, 1, 1), size=5)
                 case VisTransforms.UMEYAMA:
                     hands1: np.ndarray = self.xyz_handler.hands[0][0] # 21, 3
