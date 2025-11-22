@@ -82,7 +82,7 @@ class HandPublisher:
                 if config.MIXIN_DISTANCE:
                     dist = self.mix_in_distance(hand_vals)
                     self.xyz_handler.hands[hands.listener_id, hand_counter, :, 2] += dist
-                    xy_mean = np.mean(hand_vals[:, :2], axis=0)
+                    xy_mean = np.mean(hand_vals[:, :2], axis=0) * dist
                     self.xyz_handler.hands[hands.listener_id, hand_counter, :, :2] = (hand_vals[:, :2] - xy_mean) * 2*dist + xy_mean
                     print("MIXIN DIST", dist)
                 hand_counter += 1
